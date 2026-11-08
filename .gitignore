@@ -17,3 +17,4 @@ Thumbs.db
 
 # Local builds and test data
 /server/data/
+__pycache__/
