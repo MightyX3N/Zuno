@@ -114,6 +114,17 @@ Zuno works on the free plan, but if the host has Premium, Zuno uses what it adds
 - Blurs link QR, recovery key, server addresses and other sensitive details; click-and-hold to reveal; Copy buttons so secrets never need to be on screen.
 - Auto-enables on desktop when OBS / Streamlabs is running; manual toggle everywhere.
 
+### 5.5 Direct file sharing
+
+Send files straight to another user without posting them in a channel. Both users must be online.
+
+- Start from a user's profile / context menu or a DM: **Send file** → receiver gets a prompt (name, size, sender) → Accept / Decline. Nothing transfers before Accept.
+- **End-to-end encrypted** for the receiver's key; relays can't read it.
+- **Route**: try direct peer-to-peer first (shared server only for signaling; UDP hole punching on native clients, WebRTC data channel in the browser). If that fails → stream through a server both users share. The server forwards encrypted bytes only and **never stores** the file.
+- **Server owner settings**: allow/deny relayed transfers, max relayed file size. Direct P2P transfers are not limited by the server.
+- Progress bar, pause / resume (continues after a dropped connection), multiple files at once, hash check on arrival.
+- Streamer mode hides incoming file names until revealed.
+
 ## 6. Layouts and modding
 
 - A **layout pack** = mostly data (Lua table): regions, which built-in components go where, theme tokens (colors, fonts, spacing), assets, and a **mobile variant**.
@@ -181,6 +192,13 @@ docs/       hosting, modding, protocol docs
 - [ ] Markdown, mentions, replies, reactions, custom emoji
 - [ ] File and image uploads (chunked over TCP), avatars
 - [ ] Notifications while the app is running
+- [ ] Direct file sharing: offer / accept / decline prompt
+- [ ] Direct file sharing: end-to-end encryption for the receiver's key
+- [ ] Direct file sharing: P2P via UDP hole punching (native), server as signaling
+- [ ] Direct file sharing: relay fallback through a shared server (stream only, never stored)
+- [ ] Direct file sharing: owner settings (allow relay, max relayed size)
+- [ ] Direct file sharing: progress, pause/resume, multiple files, hash check
+- [ ] Direct file sharing in the browser: WebRTC data channel (Phase 6)
 
 ### Phase 3: Server management
 - [ ] Roles + permission bitflags, per-channel overrides
