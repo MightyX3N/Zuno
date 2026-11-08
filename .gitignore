@@ -14,3 +14,6 @@ server/data/
 Thumbs.db
 .vscode/
 .idea/
+
+# Local builds and test data
+/server/data/
