@@ -43,11 +43,26 @@ Repo: https://github.com/MightyX3N/Zuno · Studio: DoveCross · Author: MightyX3
 - Tunnel traffic is not encrypted → Zuno encrypts everything itself.
 - Server sees playit's IP, not the user's → bans are by identity key, not IP (Proxy Protocol optional later).
 
+### 3.1 playit Premium must be supported too
+Zuno works on the free plan, but if the host has Premium, Zuno uses what it adds:
+
+| Premium feature | How Zuno uses it |
+|---|---|
+| **HTTPS tunnels** | playit terminates TLS → browser clients connect with `wss://` straight to the playit HTTPS address. Server receives plain WebSocket behind the tunnel (no own cert needed). Gives full browser support incl. voice without the host owning a domain |
+| **Custom domains** | Invite address can be the host's own domain (e.g. `chat.example.com`) on TCP/UDP or HTTPS tunnels |
+| **Dedicated IP** | Works as a normal address; nothing special needed |
+| **More tunnels / ports** | Optional separate ports per service (e.g. dedicated file-transfer port) if the host wants |
+
+- Server config has a **connection setup** section where the host enters each public address and what it is: `tcp` (native clients), `udp` (voice), `https` (browser via playit HTTPS tunnel), plus optional custom domain.
+- The invite / server info sent to clients lists all available addresses; each client picks the one it can use (native → TCP/UDP, browser → HTTPS/`wss`).
+- Server accepts WebSocket both directly (own TLS or plain) and behind a TLS-terminating tunnel (trust `X-Forwarded-*` only from the tunnel when enabled).
+
 ## 4. Browser client constraints (important)
 
 - Browsers can't open raw TCP/UDP → browser uses **WebSocket** on the same server port.
 - GitHub Pages is HTTPS → browser may only use **`wss://`** → server needs a valid TLS certificate.
 - Can't get a cert for `*.at.ply.gg`. So:
+  - **Host has playit Premium**: use a playit **HTTPS tunnel** → full browser support incl. voice, no cert work (see 3.1).
   - **Server owner has a domain** (e.g. `chat.example.com` CNAME → playit tunnel): server gets a Let's Encrypt cert via DNS-01 and terminates TLS itself → full browser support incl. voice. (Verify playit free tier accepts a CNAME'd domain; else Premium.)
   - **No domain**: server can serve the web client itself over plain `http://name.at.ply.gg:port` → `ws://` works. Text chat yes; **no voice** (mic needs a secure context). App-level encryption still applies.
 - Browser voice = Opus over WebSocket (TCP), slightly higher latency.
@@ -179,6 +194,10 @@ docs/       hosting, modding, protocol docs
 - [ ] Server: WebSocket support on the same port (first-byte sniffing)
 - [ ] Server: optional TLS (own cert) + Let's Encrypt DNS-01 helper/docs
 - [ ] Server: optional built-in web client over plain HTTP for owners without a domain
+- [ ] Server: work behind a playit Premium HTTPS tunnel (plain WebSocket behind TLS termination)
+- [ ] Server config "connection setup": list public addresses by type (tcp / udp / https / custom domain)
+- [ ] Clients pick the right address from the server's address list (native → TCP/UDP, browser → HTTPS)
+- [ ] Hosting guide: free plan vs Premium setups
 - [ ] `web/app/`: HTML/CSS renderer for layout packs
 - [ ] Wasmoon integration: run shared Lua + layout scripts in the browser
 - [ ] JS/WASM crypto matching the native implementation
