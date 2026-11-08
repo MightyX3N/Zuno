@@ -135,6 +135,36 @@ Send files straight to another user without posting them in a channel. Both user
 - Built-in packs (from the design canvas): **tabs** (default), **terminal**, **messenger** (early-2000s IM look, no MSN branding), **deck** (multi-column).
 - Design previews: https://claude.ai/artifact/M3y1Py8gQWnN5JgjRQknHi (private to the owner)
 
+### 6.1 Addons (features, not just theming)
+
+Servers can add real features: polls, games, music-bot panels, leaderboards, stream panels, custom commands, and so on. Two kinds:
+
+**Server plugins** (run on the server)
+- Lua on the server, installed by the owner on purpose.
+- API: server events (message sent, user joined, voice join…), commands, own namespaced database tables, send messages as a bot, talk to their client addon.
+- Sandboxed from the host machine by default (no `io`, `os`, `ffi`, raw sockets). Owner can grant extra rights per plugin in the server config (e.g. outbound HTTP to listed hosts).
+
+**Client addons** (shipped by a server, run in every member's client)
+- **One sandbox per server**: each server's addons run in their own Lua state. Native: a separate `love.thread`; browser: a Wasmoon instance in a Web Worker. Server A's addons can never see server B, the UI of other servers, or each other's storage.
+- **No access to the computer or the user's data**: no `io`, `os`, `ffi`, `require`, `load` of bytecode, `debug`, `string.dump`, no file system, no clipboard reading, no network except messages to **its own server's plugin** through the Zuno API. Never sees the account key, the account package, other servers or DMs elsewhere.
+- **Instruction limit + memory cap**; an addon that hangs or blows up is stopped and reported, the client keeps running.
+- **Capability API only**:
+  - UI: panels, buttons, modals, widgets in regions the layout allows (same draw API as layout scripts)
+  - Read: channels / members / messages of **that server** the user can already see
+  - Act: send a message or reaction **only right after a user action** (click), marked "via <addon>"
+  - Talk to its server plugin (custom packets, rate-limited)
+  - Play sounds / show images from the addon's own assets
+  - Small per-addon storage, scoped to that server, size quota
+  - Hook core media features (voice, future video) through the API, never raw devices
+  - Open links only through a confirmation dialog
+- **Permissions shown on join**: list of what the server's addons can do; user can allow, deny, or turn addons off per server at any time. Rate limits on everything that sends.
+- Addon code is signed by the server key, cached by hash, and viewable ("View source") from server settings.
+
+### 6.2 Video sharing (future)
+- Core Zuno provides capture (screen/camera), encode/decode (H.264 or VP9/AV1 via FFI; WebCodecs in browser), stream transport, and a video component.
+- Addons/plugins decide UI and rules ("Go live" button, who may stream, quality/viewer caps, watch parties).
+- Bandwidth: server relays every stream to every viewer → P2P for small groups, owner quality caps, VPS for big servers.
+
 ## 7. Known platform limits
 
 - **Notifications**: LÖVE apps pause in the background on Android; no push when the app is closed. Real push needs FCM = a central relay, against the self-hosted idea. Skipped for now; optional relay later. Same limit on iOS/browser.
@@ -207,14 +237,21 @@ docs/       hosting, modding, protocol docs
 - [ ] Server settings editable from the client (owner key)
 - [ ] Optional playit Proxy Protocol support (real client IPs)
 
-### Phase 4: Layout system
+### Phase 4: Layouts and addons
 - [ ] Layout pack format (Lua table spec) + loader
 - [ ] Move Tabs layout into `layouts/tabs/` as a pack
 - [ ] Port Terminal, Messenger, Deck packs
 - [ ] Server-shipped packs: download on connect, cache by hash
 - [ ] Sandboxed layout scripts (restricted env, instruction limit, memory cap) + widget draw API
 - [ ] "Use server layouts" toggle + per-server override
-- [ ] Modding guide in `docs/`
+- [ ] Server plugins: loader, event/command/DB API, host sandbox, per-plugin extra rights in config
+- [ ] Client addons: one sandbox per server (love.thread native / Web Worker + Wasmoon browser)
+- [ ] Client addons: locked-down environment, instruction limit, memory cap, crash isolation
+- [ ] Client addons: capability API (UI, read server data, user-triggered send, plugin messaging, assets, scoped storage, link confirm)
+- [ ] Client addons: permission prompt on join, per-server allow/deny/off, rate limits
+- [ ] Addon signing by server key, hash cache, "View source"
+- [ ] Example addons: poll, simple game, leaderboard
+- [ ] Modding guide in `docs/` (layouts, client addons, server plugins)
 
 ### Phase 5: Android
 - [ ] LÖVE Android build (APK) via CI
@@ -256,4 +293,4 @@ docs/       hosting, modding, protocol docs
 - [ ] DMs (relayed through a server both users share)
 - [ ] Plugin / bot API in Lua
 - [ ] Optional push relay for background notifications
-- [ ] Screen sharing
+- [ ] Video / screen sharing as a core feature addons can hook into (see 6.2)
