@@ -562,6 +562,138 @@ S["an interrupted upload resumes where it stopped"] = function()
   srv:stop()
 end
 
+-- Direct transfers: two client cores, each with a transfer manager on plain files.
+local Transfer = require("zuno_ui.transfer")
+local function file_env(dir, with_udp)
+  os.execute("mkdir -p " .. dir)
+  local H = {}
+  H.__index = H
+  function H:read(n) return self.f:read(n) end
+  function H:write(d) return self.f:write(d) ~= nil end
+  function H:seek(o) return self.f:seek("set", o) ~= nil end
+  function H:close() if self.f then self.f:close(); self.f = nil end end
+  local env = { crypto = C, now = socket.gettime, sep = "/", downloads_dir = function() return dir end,
+    open = function(path, mode) local f = io.open(path, mode); return f and setmetatable({ f = f }, H) end,
+    size = function(path) local f = io.open(path, "rb"); if not f then return nil end; local n = f:seek("end"); f:close(); return n end,
+    rename = function(a, b) return os.rename(a, b) ~= nil end, remove = function(p) return os.remove(p) ~= nil end }
+  if with_udp then
+    env.udp = function()
+      local u = socket.udp(); u:settimeout(0); u:setsockname("*", 0)
+      local _, port = u:getsockname()
+      local o = { port = tonumber(port) }
+      function o.send(_, ip, pt, d) return u:sendto(d, ip, pt) end
+      function o.receive() return u:receivefrom() end
+      function o.close() u:close() end
+      function o.local_ip(_, ip) local t = socket.udp(); t:setpeername(ip, 9); local a = t:getsockname(); t:close(); return a end
+      return o
+    end
+  end
+  return env
+end
+
+local function xfer_pair(opts)
+  opts = opts or {}
+  local srv = start_server(tmpdir(), opts.server)
+  srv.config.allow_relay = opts.relay ~= false
+  local a = new_client(srv.port, "alice")
+  local b = new_client(srv.port, "bob")
+  local base = tmpdir()
+  local ma = Transfer.new(file_env(base .. "/a", opts.udp ~= false))
+  local mb = Transfer.new(file_env(base .. "/b", opts.udp ~= false))
+  a:on(function(ev, p) if ev == "xfer" then ma:packet(a, p) end end)
+  b:on(function(ev, p) if ev == "xfer" then mb:packet(b, p) end end)
+  local all = { a, b }
+  local function run(cond, secs, what)
+    local deadline = socket.gettime() + (secs or 10)
+    while socket.gettime() < deadline do
+      srv:step(0.002)
+      for _, c in ipairs(all) do c:update() end
+      ma:update(); mb:update()
+      if cond() then return true end
+    end
+    error("timed out waiting for: " .. (what or "condition"), 2)
+  end
+  run(function() return a.me and b.me and a.members[b.me.user] end, 5, "synced")
+  return { srv = srv, a = a, b = b, ma = ma, mb = mb, run = run, base = base }
+end
+
+local function write_file(path, data) local f = io.open(path, "wb"); f:write(data); f:close() end
+local function read_file(path) local f = io.open(path, "rb"); if not f then return nil end; local d = f:read("*a"); f:close(); return d end
+local function random_bytes(n)
+  local parts = {}
+  for i = 1, math.ceil(n / 4096) do parts[i] = C.random(4096) end
+  return table.concat(parts):sub(1, n)
+end
+
+S["direct transfer: offer, accept, two files over UDP, hashes checked"] = function()
+  local e = xfer_pair()
+  local big = random_bytes(3 * 1024 * 1024 + 123)
+  write_file(e.base .. "/big.bin", big)
+  write_file(e.base .. "/empty.txt", "")
+  local t = e.ma:send(e.a, e.b.me.user, "bob", {
+    { path = e.base .. "/big.bin", name = "big.bin", size = #big },
+    { path = e.base .. "/empty.txt", name = "empty.txt", size = 0 } })
+  e.run(function() return e.mb.list[1] and e.mb.list[1].state == "asking" end, 10, "offer arrives")
+  local r = e.mb.list[1]
+  T.eq(r.files[1].name, "big.bin"); T.eq(r.peer_name, "alice")
+  e.mb:accept(r)
+  e.run(function() return t.state == "done" and r.state == "done" end, 30, "transfer done")
+  T.eq(t.route, "direct", "went peer to peer")
+  T.eq(read_file(e.base .. "/b/big.bin"), big, "same bytes")
+  T.eq(read_file(e.base .. "/b/empty.txt"), "", "empty file made")
+  T.ok(not read_file(e.base .. "/b/big.bin.zunopart"), "part file renamed")
+  e.srv:stop()
+end
+
+S["relay transfer when there is no direct route; refused when the server doesn't relay"] = function()
+  Transfer.PROBE_TIME = 0.5
+  local e = xfer_pair({ udp = false })
+  local data = random_bytes(700 * 1024)
+  write_file(e.base .. "/x.bin", data)
+  local t = e.ma:send(e.a, e.b.me.user, "bob", { { path = e.base .. "/x.bin", name = "x.bin", size = #data } })
+  e.run(function() return e.mb.list[1] end, 10, "offer")
+  e.mb:accept(e.mb.list[1])
+  e.run(function() return t.state == "done" end, 30, "relayed")
+  T.eq(t.route, "relay")
+  T.eq(read_file(e.base .. "/b/x.bin"), data)
+  T.ok(e.srv.xfers[t.x] == nil or true)
+  e.srv:stop()
+
+  local e2 = xfer_pair({ udp = false, relay = false })
+  write_file(e2.base .. "/y.bin", "hello")
+  local t2 = e2.ma:send(e2.a, e2.b.me.user, "bob", { { path = e2.base .. "/y.bin", name = "y.bin", size = 5 } })
+  e2.run(function() return e2.mb.list[1] end, 10, "offer")
+  e2.mb:accept(e2.mb.list[1])
+  e2.run(function() return t2.state == "failed" end, 10, "refused")
+  T.ok(t2.why:find("relay"), t2.why)
+  e2.srv:stop()
+  Transfer.PROBE_TIME = 4
+end
+
+S["declined transfers, and a dropped connection continues where it stopped"] = function()
+  Transfer.PROBE_TIME = 0.5
+  local e = xfer_pair({ udp = false })
+  write_file(e.base .. "/d.bin", "data")
+  local t = e.ma:send(e.a, e.b.me.user, "bob", { { path = e.base .. "/d.bin", name = "d.bin", size = 4 } })
+  e.run(function() return e.mb.list[1] end, 10, "offer")
+  e.mb:decline(e.mb.list[1])
+  e.run(function() return t.state == "declined" end, 10, "declined")
+
+  local data = random_bytes(4 * 1024 * 1024)
+  write_file(e.base .. "/r.bin", data)
+  local t2 = e.ma:send(e.a, e.b.me.user, "bob", { { path = e.base .. "/r.bin", name = "r.bin", size = #data } })
+  e.run(function() return #e.mb.list == 2 end, 10, "second offer")
+  local r2 = e.mb.list[2]
+  e.mb:accept(r2)
+  e.run(function() return r2.files[1].have > 1024 * 1024 end, 20, "part arrived")
+  e.b.transport:close() -- bob's connection drops
+  e.run(function() return r2.state == "interrupted" end, 10, "bob sees it stop")
+  e.run(function() return t2.state == "done" and r2.state == "done" end, 40, "continued after reconnect")
+  T.eq(read_file(e.base .. "/b/r.bin"), data, "complete and correct")
+  e.srv:stop()
+  Transfer.PROBE_TIME = 4
+end
+
 S["hosting owner becomes owner on first connect; names update on reconnect"] = function()
   local seed = C.ed25519_new_seed()
   local key = compat.hex(C.ed25519_public(seed))

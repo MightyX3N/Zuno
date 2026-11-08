@@ -16,13 +16,14 @@ scripts/package-windows.sh     # build/dist/Zuno-<version>-win64.zip (Zuno.exe +
 | `zuno_native/love_backend.lua` | The LÖVE implementation of the platform API ([ui/PLATFORM.md](../ui/PLATFORM.md)), including text fields |
 | `zuno_native/tcp.lua` | Non-blocking TCP transport |
 | `zuno_native/host_thread.lua` | Runs the server in a thread for "Host a server" |
-| `zuno_native/files.lua` | System Open / Save dialogs and Unicode-safe file access |
+| `zuno_native/files.lua` | System Open / Save dialogs, Unicode-safe file access, streaming handles and the Downloads folder |
 | `zuno_native/notify.lua` | Desktop notifications (Windows tray balloon, `notify-send`, macOS) and taskbar flash |
 | `assets/fonts/` | Inter (with italics), Space Grotesk and JetBrains Mono for code (SIL OFL) |
 | `assets/emoji/` | Twemoji sheet (CC-BY 4.0), rebuilt with `scripts/build-emoji.py` |
 | `assets/icon/` | App icon (window, Windows tray) |
 
 `ZUNO_DEBUG_NOTIFY=1` prints every notification to the console (handy where no notification service runs).
+`ZUNO_DEBUG_XFER=1` prints the state of running direct transfers once a second (route, window, resends).
 
 The UI itself is shared Lua in `ui/zuno_ui/`, so the browser client can run the same code.
 Data (identity key, server list, settings) is stored in LÖVE's save folder for `zuno`.

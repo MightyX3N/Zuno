@@ -80,8 +80,9 @@ function M.attach(app, conn, v, name, data)
   v.attach[#v.attach + 1] = a
 end
 
-function M.pick(app, conn, v)
+function M.pick(app, conn, v, field)
   app.P.pick_file("Any file", nil, function(data, path)
+    if field and not app.modal then field:focus() end -- back to typing, like before the click
     if not data then
       if path ~= "cancelled" then app.ctl:toast(path == "unavailable" and "No file dialog here: drop the file onto the window." or tostring(path), "error") end
       return

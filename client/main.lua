@@ -167,8 +167,11 @@ function love.load()
     list = function(dir) return love.filesystem.getDirectoryItems(dir) end,
   }
   local transport = TCP.factory(resolve)
+  if os.getenv("ZUNO_DEBUG_XFER") then require("zuno_ui.transfer").debug = print end
   ctl = Controller.new({ crypto = crypto, transport = transport, now = love.timer.getTime, storage = storage, host = host,
-    notify = P.notify, sound = P.play_sound, attention = P.attention })
+    notify = P.notify, sound = P.play_sound, attention = P.attention,
+    transfer_env = { open = P.open_file, size = P.file_size, rename = P.rename_file, remove = P.remove_file,
+                     downloads_dir = P.downloads_dir, sep = P.path_sep, udp = P.udp } })
   ui = UI.new(P)
   app = App.new(ui, P, ctl, pack)
   if #ctl.servers == 0 then app.page = "add" end
@@ -265,7 +268,7 @@ function love.run()
     if love.timer then love.timer.step() end
     if love.update then love.update() end
     local t = love.timer.getTime()
-    local busy = t - last_input < 1.5 or t - last_net < 1.0
+    local busy = t - last_input < 1.5 or t - last_net < 1.0 or (ctl and ctl.transfers and ctl.transfers:active() > 0)
     if love.graphics and love.graphics.isActive() and (busy or t >= next_idle_draw) then
       next_idle_draw = t + 0.25
       love.graphics.origin()

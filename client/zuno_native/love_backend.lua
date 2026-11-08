@@ -210,6 +210,53 @@ local files = require("zuno_native.files")
 function P.save_file(name, data, label, ext, done) return files.save(name, data, label, ext, done) end
 function P.pick_file(label, ext, done) return files.pick(label, ext, done) end
 function P.file_dialog_open() return files.busy() end
+function P.pick_path(label, done) return files.pick_path(label, done) end
+P.open_file, P.file_size, P.rename_file, P.remove_file = files.open, files.size, files.rename, files.remove
+function P.downloads_dir() return files.downloads_dir() end
+P.path_sep = love.system.getOS() == "Windows" and "\\" or "/"
+
+-- UDP for direct transfers: u = P.udp(); u:send(ip, port, data); u:receive() -> data, ip, port
+local socket_lib = require("socket")
+function P.udp()
+  local u = socket_lib.udp()
+  if not u then return nil end
+  u:settimeout(0)
+  if not u:setsockname("*", 0) then u:close(); return nil end
+  -- Big buffers: transfers send in bursts (Windows' default is only 64 KB). LÖVE's LuaSocket
+  -- (3.0-rc1) has no option for it, so setsockopt is called directly on the socket.
+  pcall(function()
+    local ffi = require("ffi")
+    local fd = u:getfd()
+    local size = ffi.new("int[1]", 4 * 1024 * 1024)
+    if ffi.os == "Windows" then
+      pcall(ffi.cdef, "int setsockopt(uintptr_t s, int level, int name, const char *val, int len);")
+      local ws = ffi.load("ws2_32")
+      ws.setsockopt(fd, 0xFFFF, 0x1002, ffi.cast("const char *", size), 4) -- SOL_SOCKET, SO_RCVBUF
+      ws.setsockopt(fd, 0xFFFF, 0x1001, ffi.cast("const char *", size), 4) -- SO_SNDBUF
+    else
+      pcall(ffi.cdef, "int setsockopt(int s, int level, int name, const void *val, unsigned int len);")
+      local SOL, RCV, SND = 1, 8, 7                                          -- Linux
+      if ffi.os == "OSX" then SOL, RCV, SND = 0xFFFF, 0x1002, 0x1001 end
+      ffi.C.setsockopt(fd, SOL, RCV, size, 4)
+      ffi.C.setsockopt(fd, SOL, SND, size, 4)
+    end
+  end)
+  local _, port = u:getsockname()
+  local o = { port = tonumber(port) }
+  function o.send(_, ip, p, data) return u:sendto(data, ip, p) ~= nil end
+  function o.receive() local d, ip, p = u:receivefrom(); if d then return d, ip, p end end
+  function o.close() u:close() end
+  -- this machine's address on the network that reaches `ip` (no packet is sent)
+  function o.local_ip(_, ip)
+    local t = socket_lib.udp()
+    if not t then return nil end
+    t:setpeername(ip, 9)
+    local addr = t:getsockname()
+    t:close()
+    return addr
+  end
+  return o
+end
 function P.poll_files() files.poll() end
 
 -- When no save dialog exists: write into the Zuno folder and return its real path.

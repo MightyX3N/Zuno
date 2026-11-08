@@ -46,7 +46,7 @@ return {
   -- otherwise they can stream through this server (never stored).
   allow_relay = %s,
   max_relay_mb = %d, -- 0 = no limit per transfer
-  udp = %s,          -- lets clients find a direct route. With playit.gg, add a UDP tunnel to the same port.
+  udp = %s,          -- lets clients find a direct route. Behind a tunnel, it needs UDP on the same address and port.
 }
 ]]
 

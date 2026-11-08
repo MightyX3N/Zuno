@@ -147,6 +147,10 @@ Send files straight to another user without posting them in a channel. Both user
 - **Server owner settings**: allow/deny relayed transfers, max relayed file size. Direct P2P transfers are not limited by the server.
 - Progress bar, pause / resume (continues after a dropped connection), multiple files at once, hash check on arrival.
 - Streamer mode hides incoming file names until revealed.
+- Implementation (built, protocol 3): started from **Send files…** in the member menu (up to 20 files). The sender hashes every file (BLAKE2b) first. Offer and answer are signed by each side's account key over the server key, transfer id, peer and a fresh ephemeral X25519 key (`zuno-xfer-offer-v1:` / `zuno-xfer-answer-v1:`, the offer also covers a digest of the file list); `k = BLAKE2b(shared‖A‖B‖x)` and every transfer message is sealed with k, so neither the server nor a swapped key can read or forge it.
+- Direct route: each side sends its local address plus the address the server's UDP port saw (a STUN-like reflector on the server's port) as candidates, then both probe all candidates for 4 s. The first answered probe wins; otherwise the transfer goes through the server as `xfer_data` packets. Relaying is off when the owner sets `allow_relay = false` and refused past `max_relay_mb`; control messages under 2 KB always pass.
+- Flow control: window with AIMD congestion control, range acks, retransmit timeout from measured RTT (0.25–1 s), periodic acks. UDP socket buffers are raised to 4 MB.
+- The receiver writes `<Downloads>/<name>.zunopart`, checks the hash, then renames it (`photo (2).jpg` if the name is taken). If either side drops, the server sends `xfer_end peer_offline`, both mark the transfer interrupted, and the sender re-offers the same transfer when both are back; the receiver accepts it automatically and says how much it already has.
 
 ### 5.6 Server identity (anti-impersonation)
 - Every server has its own **Ed25519 server key**, created on first run. The handshake proves the server holds it.
@@ -353,12 +357,12 @@ tests/      test runner + suites (LuaJIT, and Lua 5.4 for the shared code)
 - [x] Custom emoji per server
 - [x] File and image uploads (chunked over TCP), avatars
 - [x] Notifications while the app is running
-- [ ] Direct file sharing: offer / accept / decline prompt
-- [ ] Direct file sharing: end-to-end encryption for the receiver's key
-- [ ] Direct file sharing: P2P via UDP hole punching (native), server as signaling
-- [ ] Direct file sharing: relay fallback through a shared server (stream only, never stored)
-- [ ] Direct file sharing: owner settings (allow relay, max relayed size)
-- [ ] Direct file sharing: progress, pause/resume, multiple files, hash check
+- [x] Direct file sharing: offer / accept / decline prompt
+- [x] Direct file sharing: end-to-end encryption for the receiver's key
+- [x] Direct file sharing: P2P via UDP hole punching (native), server as signaling
+- [x] Direct file sharing: relay fallback through a shared server (stream only, never stored)
+- [x] Direct file sharing: owner settings (allow relay, max relayed size)
+- [x] Direct file sharing: progress, pause/resume, multiple files, hash check
 - [ ] Direct file sharing in the browser: WebRTC data channel (Phase 6)
 
 ### Phase 3: Server management

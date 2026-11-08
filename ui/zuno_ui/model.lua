@@ -427,6 +427,8 @@ function Conn:_on_packet(p)
     self:_download_packet(p)
   elseif t:sub(1, 5) == "xfer_" then
     self:_emit("xfer", p)
+  elseif t == "err" and p.re and self.xfer_q and self.xfer_q[p.re] then
+    self:_emit("xfer", p)
   elseif t == "err" and self:_transfer_error(p) then
     return
   elseif t == "err" then

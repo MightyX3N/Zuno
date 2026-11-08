@@ -72,7 +72,9 @@ Zuno Server.exe
 
 Letting friends in
   Create a TCP tunnel in playit.gg pointing at the server's port (41234 by default)
-  and send your friends the tunnel address.
+  and send your friends the tunnel address. If the tunnel can carry TCP and UDP on the
+  same address, choose that: direct file transfers then find a straight path between
+  people more often instead of going through the server.
 
 Running two clients on one PC (for testing)
   Start the second one from a command prompt with:  set ZUNO_PROFILE=test && Zuno.exe
@@ -87,7 +89,18 @@ Chatting
   Type @ to mention someone and : to find an emoji. Hover a message to react or reply.
   Settings > Notifications decides what makes a notification while Zuno is open.
 
-This is an early test build: text chat only. Voice, files and more come later.
+Files
+  Press + next to the message box (or drop files on the window) to post files and
+  pictures in a channel; they are stored on the server. Click a picture to view it.
+  Your profile picture is in Settings > General. Server owners add the server's own
+  emoji in the emoji picker.
+  To send files straight to someone, right-click them in the member list and pick
+  "Send files...". They accept first, the files go directly between you when possible
+  (otherwise through the server, if the owner allows it), encrypted so only they can
+  read them, and land in their Downloads folder. Transfers can be paused and pick up
+  where they stopped if someone loses the connection.
+
+This is an early test build: voice and more come later.
 EOF
 sed -i 's/$/\r/' "$OUT/README.txt"
 rm -f "$DIST/Zuno-$VERSION-win64.zip"

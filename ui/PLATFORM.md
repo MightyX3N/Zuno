@@ -24,6 +24,11 @@ Colors are `{r, g, b, a}` with values from 0 to 1. Coordinates are in UI units
 | `P.clip(x, y, w, h)` / `P.unclip()` | Nested clipping |
 | `P.image(path)` | Image handle (cached), or nil if it can't be loaded |
 | `P.draw_image(img, x, y, w, h, sx, sy, sw, sh)` | Draw a part of an image (`sx..sh` in image pixels) into a box; used for the emoji sheet |
+| `P.draw_image_round(img, x, y, w, h, radius, ...)` | Same, cut to a rounded rectangle (`radius = w/2` makes a circle: avatars) |
+| `P.image_from_data(key, data)` | Image from file bytes, cached under `key` (attachments, avatars, server emoji). Without `data` it only looks in the cache. Nil if the bytes aren't an image |
+| `P.image_size(img)` | Width and height in pixels |
+| `P.image_info(data, name)` | Width and height of image bytes, or nil if they aren't an image |
+| `P.square_png(data, size)` | Center-cropped square PNG of `size` pixels from image bytes (avatars, server emoji) |
 
 Font faces also include `italic`, `bold_italic` and `mono` (message formatting).
 
@@ -66,6 +71,11 @@ Real editable text fields are owned by the backend (in the browser they are `<in
 | `P.safe_area()` | Insets `{top, right, bottom, left}` for notches, keyboards and TV overscan |
 | `P.save_file(name, data, label, ext, done)` | System "Save as" dialog. Later calls `done(path)` or `done(nil, "cancelled" \| "unavailable" \| error)` |
 | `P.pick_file(label, ext, done)` | System "Open" dialog. Later calls `done(data, path)` or `done(nil, reason)` |
+| `P.pick_path(label, done)` | "Open" dialog that only returns the path: `done(path, size)` or `done(nil, reason)`. For direct transfers, which stream big files instead of loading them |
+| `P.open_file(path, mode)` | Streaming file handle (`"rb"`, `"wb"`, `"ab"`, `"r+b"`): `h:read(n)`, `h:write(s)`, `h:seek(pos)`, `h:size()`, `h:close()`. Unicode paths and files over 2 GB work on Windows |
+| `P.file_size(path)` / `P.rename_file(a, b)` / `P.remove_file(path)` | Plain file operations on real paths |
+| `P.downloads_dir()` / `P.path_sep` | The user's Downloads folder (received transfers go there) and `\` or `/` |
+| `P.udp()` | Non-blocking UDP socket for direct transfers: `u.port`, `u:send(ip, port, data)`, `u:receive()` → `data, ip, port`, `u:local_ip(towards_ip)`, `u:close()`. Nil where UDP isn't possible (the browser uses WebRTC later) |
 | `P.save_fallback(name, data)` | Save into Zuno's own folder when there's no dialog. Returns the path |
 | `P.open_folder(path)` | Show a folder in the file manager |
 | `P.recording_detected()` | True while OBS / Streamlabs runs (streamer mode "Auto"); optional |

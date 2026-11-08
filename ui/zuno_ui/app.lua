@@ -9,6 +9,7 @@ local E = require("zuno_ui.emoji")
 local Compose = require("zuno_ui.compose")
 local Picker = require("zuno_ui.emoji_picker")
 local FilesUI = require("zuno_ui.files_ui")
+local TransferUI = require("zuno_ui.transfer_ui")
 local LinkUI = require("zuno_ui.link_ui")
 
 local App = {}
@@ -222,6 +223,7 @@ function App:draw()
   if self.dialog then self:draw_dialog(w, h) end
   if self.picker then Picker.draw(self) end
   if self.menu then self:draw_menu(w, h) end
+  self.panel_used = TransferUI.draw_panel(self, w, h)
   self:draw_toasts(w, h)
   ui:draw_tooltip(T, self:font("medium", 12))
   if self.job then AccountUI.draw_job(self, w, h); self.job.shown = true end
@@ -416,6 +418,12 @@ function App:member_menu(conn, entry, m)
     items[#items + 1] = { label = "Mention", fn = function()
       local f = self:composer(entry, v.ch)
       f:insert("@" .. m.name .. " "); f:focus()
+    end }
+  end
+  if self.ctl.transfers and m.user ~= self.ctl.key and conn:supports("xfer") then
+    items[#items + 1] = { label = m.online and "Send files…" or "Send files… (offline)", fn = function()
+      if not m.online then self.ctl:toast(m.name .. " is offline. Direct transfers need you both online.", "error"); return end
+      TransferUI.open_send(self, conn, m)
     end }
   end
   if self.on_member_menu then self.on_member_menu(items, conn, entry, m) end
@@ -681,7 +689,7 @@ function App:draw_chat(conn, entry, v, x, y, w, h)
   local attach = ui:hit("attach", cx + 10, comp_y + comp_h / 2 - 15, 30, 30,
     { tip = can_files and "Attach files (or drop them here)" or "This server is too old for files", cursor = can_files and "hand" or false })
   Icons.draw(P, "plus", cx + 16, comp_y + comp_h / 2 - 9, 18, attach.hovered and T.text or T.faint)
-  if attach.clicked and can_files then FilesUI.pick(self, conn, v) end
+  if attach.clicked and can_files then FilesUI.pick(self, conn, v, field) end
   FilesUI.draw_attachments(self, v, cx, comp_y - edit_bar - FilesUI.attach_height(v), cw)
   local ph = conn.status == "online" and ("Message " .. ch.name) or "Waiting for the connection…"
   field:layout(cx + 48, comp_y + 12, comp_inner_w, self:font("regular", 14), T.text, T.faint, ph)
@@ -1550,7 +1558,7 @@ end
 function App:draw_toasts(w, h)
   local P, T = self.P, self.T
   local f = self:font("medium", 13)
-  local y = h - 96 -- above the composer
+  local y = h - 96 - (self.panel_used or 0) -- above the composer and the transfers
   for i = #self.ctl.toasts, 1, -1 do
     local t = self.ctl.toasts[i]
     local lines = self:wrap(f, t.text, 320)

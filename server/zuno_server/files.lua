@@ -144,7 +144,7 @@ function F.install(Server, H, ctx)
     for _, u in pairs(conn.uploads or {}) do u.out:close() end
     conn.uploads = nil
     for x, t in pairs(self.xfers) do
-      if t.a == conn or t.b == conn then self:_end_xfer(x, conn, "the other person went offline") end
+      if t.a == conn or t.b == conn then self:_end_xfer(x, conn, "peer_offline") end
     end
   end
 

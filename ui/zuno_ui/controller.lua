@@ -19,6 +19,12 @@ local CACHE_MAX = 30 * 1024 * 1024  -- files bigger than this aren't kept in the
 
 function Controller.new(env)
   local self = setmetatable({ env = env, conns = {}, toasts = {} }, Controller)
+  if env.transfer_env then
+    local te = { crypto = env.crypto, now = env.now }
+    for k, v in pairs(env.transfer_env) do te[k] = v end
+    self.transfers = require("zuno_ui.transfer").new(te)
+    self.transfers:on(function(ev, t) self:_transfer_event(ev, t) end)
+  end
   self:_load()
   return self
 end
@@ -142,6 +148,7 @@ function Controller:_open(entry)
     elseif ev == "notice" then self:toast(a, "info", entry)
     elseif ev == "incoming" then self:_incoming(entry, conn, a, b)
     elseif ev == "state" then self:_sync_avatar(conn)
+    elseif ev == "xfer" and self.transfers then self.transfers:packet(conn, a)
     end
   end)
   self.conns[entry] = conn
@@ -248,6 +255,19 @@ function Controller:set_sound(on) self.settings.sound = on and true or false; se
 -- env.notify(title, body), env.sound(), env.attention() come from the platform (optional).
 Controller.NOTIFY_GAP = 2 -- seconds between two notifications (bursts make one)
 
+-- Someone wants to send us files: tell the user like a mention.
+function Controller:_transfer_event(ev, t)
+  if ev == "added" and t.dir == "in" then
+    local title = (t.peer_name or "Someone") .. " wants to send you " .. (#t.files == 1 and "a file" or (#t.files .. " files"))
+    local body = self.streamer_on and "Open Zuno to accept or decline." or (t.files[1].name .. (#t.files > 1 and " and more" or ""))
+    if not (self.viewing and self.viewing.focused) and self.env.notify then self.env.notify(title, body) end
+    if self.env.attention then self.env.attention() end
+    if self.settings.sound and self.env.sound then self.env.sound() end
+  elseif ev == "state" and t.state == "done" and t.dir == "in" then
+    self:toast(("Received %s from %s"):format(#t.files == 1 and t.files[1].name or (#t.files .. " files"), t.peer_name or "someone"))
+  end
+end
+
 function Controller:test_notification()
   if self.env.notify then self.env.notify("Zuno", "Notifications work. This is what a new message looks like.") end
   if self.settings.sound and self.env.sound then self.env.sound() end
@@ -294,6 +314,7 @@ end
 
 function Controller:update()
   for _, c in pairs(self.conns) do c:update() end
+  if self.transfers then self.transfers:update() end
   local now = self.env.now()
   for i = #self.toasts, 1, -1 do if now - self.toasts[i].at > 5 then table.remove(self.toasts, i) end end
 end

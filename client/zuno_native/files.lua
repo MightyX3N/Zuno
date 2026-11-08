@@ -28,6 +28,12 @@ if is_windows then
     size_t fread(void *buf, size_t size, size_t n, void *f);
     size_t fwrite(const void *buf, size_t size, size_t n, void *f);
     int fclose(void *f);
+    int _fseeki64(void *f, int64_t off, int origin);
+    int64_t _ftelli64(void *f);
+    int _wrename(const uint16_t *a, const uint16_t *b);
+    int _wremove(const uint16_t *p);
+    int SHGetKnownFolderPath(const uint8_t *id, uint32_t flags, void *token, uint16_t **path);
+    void CoTaskMemFree(void *p);
   ]]
 end
 
@@ -200,6 +206,108 @@ function M.save(default_name, data, label, ext, done)
     if not okc then return done(nil, tostring(ok)) end
     if not ok then return done(nil, werr) end
     done(path)
+  end)
+end
+
+------------------------------------------------------------------ streaming access (big files)
+-- h = files.open(path, "rb" | "ab" | "r+b" | "wb"); h:read(n), h:write(s), h:seek(off), h:size(), h:close()
+local Handle = {}
+Handle.__index = Handle
+
+function M.open(path, mode)
+  if is_windows then
+    local f = ffi.C._wfopen((wide(path)), (wide(mode)))
+    if f == nil then return nil, "couldn't open " .. path end
+    return setmetatable({ f = f, win = true }, Handle)
+  end
+  local f, err = io.open(path, mode)
+  if not f then return nil, err end
+  return setmetatable({ f = f }, Handle)
+end
+
+function Handle:read(n)
+  if self.win then
+    local buf = ffi.new("uint8_t[?]", n)
+    local got = tonumber(ffi.C.fread(buf, 1, n, self.f))
+    if got <= 0 then return nil end
+    return ffi.string(buf, got)
+  end
+  return self.f:read(n)
+end
+function Handle:write(s)
+  if self.win then return tonumber(ffi.C.fwrite(s, 1, #s, self.f)) == #s end
+  return self.f:write(s) ~= nil
+end
+function Handle:seek(off)
+  if self.win then return ffi.C._fseeki64(self.f, off, 0) == 0 end
+  return self.f:seek("set", off) ~= nil
+end
+function Handle:size()
+  if self.win then
+    ffi.C._fseeki64(self.f, 0, 2)
+    return tonumber(ffi.C._ftelli64(self.f))
+  end
+  local cur = self.f:seek()
+  local n = self.f:seek("end")
+  self.f:seek("set", cur)
+  return n
+end
+function Handle:close()
+  if self.f == nil then return end
+  if self.win then ffi.C.fclose(self.f) else self.f:close() end
+  self.f = nil
+end
+
+function M.size(path)
+  local h = M.open(path, "rb")
+  if not h then return nil end
+  local n = h:size(); h:close()
+  return n
+end
+
+function M.rename(a, b)
+  if is_windows then return ffi.C._wrename((wide(a)), (wide(b))) == 0 end
+  return os.rename(a, b) ~= nil
+end
+function M.remove(p)
+  if is_windows then return ffi.C._wremove((wide(p))) == 0 end
+  return os.remove(p) ~= nil
+end
+
+-- The user's Downloads folder (created if missing), or nil.
+local downloads
+function M.downloads_dir()
+  if downloads then return downloads end
+  if is_windows then
+    -- FOLDERID_Downloads {374DE290-123F-4565-9164-39C4925E467B}
+    local id = ffi.new("uint8_t[16]", { 0x90, 0xE2, 0x4D, 0x37, 0x3F, 0x12, 0x65, 0x45, 0x91, 0x64, 0x39, 0xC4, 0x92, 0x5E, 0x46, 0x7B })
+    local ok, dir = pcall(function()
+      local shell = ffi.load("shell32")
+      local out = ffi.new("uint16_t*[1]")
+      if shell.SHGetKnownFolderPath(id, 0, nil, out) ~= 0 then return nil end
+      local s = narrow(out[0])
+      ffi.load("ole32").CoTaskMemFree(out[0])
+      return s
+    end)
+    downloads = ok and dir or ((os.getenv("USERPROFILE") or ".") .. "\\Downloads")
+  else
+    local p = io.popen("xdg-user-dir DOWNLOAD 2>/dev/null")
+    local d = p and p:read("*l")
+    if p then p:close() end
+    if not d or d == "" or d == os.getenv("HOME") then d = (os.getenv("HOME") or ".") .. "/Downloads" end
+    os.execute("mkdir -p '" .. d:gsub("'", "'\\''") .. "'")
+    downloads = d
+  end
+  return downloads
+end
+
+-- done(path, size) or done(nil, reason): choose a file without reading it (big transfers).
+function M.pick_path(label, done)
+  dialog(false, nil, label, nil, function(path, err)
+    if not path then return done(nil, err) end
+    local n = M.size(path)
+    if not n then return done(nil, "couldn't open the file") end
+    done(path, n)
   end)
 end
 
