@@ -50,6 +50,8 @@ cp "$LOVE_DIR/license.txt" "$OUT/licenses/LOVE.txt"
 cp native/monocypher/LICENCE.md "$OUT/licenses/Monocypher.txt"
 cp client/assets/fonts/Inter-OFL.txt "$OUT/licenses/Inter-OFL.txt"
 cp client/assets/fonts/SpaceGrotesk-OFL.txt "$OUT/licenses/SpaceGrotesk-OFL.txt"
+cp client/assets/fonts/JetBrainsMono-OFL.txt "$OUT/licenses/JetBrainsMono-OFL.txt"
+cp client/assets/emoji/LICENSE.txt "$OUT/licenses/Twemoji-and-emoji-data.txt"
 cat > "$OUT/README.txt" <<EOF
 Zuno $VERSION (test build) for Windows 64-bit
 https://zuno.dovecross.site
@@ -75,6 +77,11 @@ Your account
   Your account is a key stored on this PC (no password). In Settings you can back it
   up to a .zunokey file with a recovery key, link another device, or replace the key
   if a device is lost. Streamer mode hides addresses and keys while OBS is running.
+
+Chatting
+  **bold**, *italic*, ~~strike~~, `code`, ```code blocks``` and > quotes work in messages.
+  Type @ to mention someone and : to find an emoji. Hover a message to react or reply.
+  Settings > Notifications decides what makes a notification while Zuno is open.
 
 This is an early test build: text chat only. Voice, files and more come later.
 EOF

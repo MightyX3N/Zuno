@@ -10,6 +10,7 @@ local is_windows = ffi.os == "Windows"
 local MAX_READ = 64 * 1024 * 1024
 
 if is_windows then
+  pcall(ffi.cdef, "int MultiByteToWideChar(unsigned int cp, uint32_t flags, const char *s, int n, uint16_t *w, int wn);")
   ffi.cdef[[
     typedef struct {
       uint32_t lStructSize; void *hwndOwner; void *hInstance; const uint16_t *lpstrFilter;
@@ -22,7 +23,6 @@ if is_windows then
     int GetOpenFileNameW(ZUNO_OPENFILENAMEW *ofn);
     int GetSaveFileNameW(ZUNO_OPENFILENAMEW *ofn);
     void *GetActiveWindow(void);
-    int MultiByteToWideChar(unsigned int cp, uint32_t flags, const char *s, int n, uint16_t *w, int wn);
     int WideCharToMultiByte(unsigned int cp, uint32_t flags, const uint16_t *w, int wn, char *s, int n, const char *d, int *u);
     void *_wfopen(const uint16_t *path, const uint16_t *mode);
     size_t fread(void *buf, size_t size, size_t n, void *f);

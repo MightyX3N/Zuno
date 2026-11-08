@@ -2,7 +2,7 @@
 -- version in common. Bump MAX when adding packets; raise MIN only when dropping old ones.
 local version = {
   MIN = 1,
-  MAX = 1,
+  MAX = 2,           -- 2: replies and reactions
   APP = "0.1.0-dev", -- shown in clients and the server console
 }
 

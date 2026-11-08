@@ -18,6 +18,7 @@ function UI:begin(w, h)
   self.w, self.h = w, h
   self.prev = self.regions
   self.regions = {}
+  for _ = 1, #self.clip_stack do self.P.unclip() end -- a clip left open by mistake must not leak into the next frame
   self.clip_stack = {}
   self.cursor = "arrow"
   self.tooltip_req = nil

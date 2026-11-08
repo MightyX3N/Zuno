@@ -13,7 +13,7 @@ end
 local files = {
   { "test_compat", true }, { "test_msgpack", true }, { "test_frame", true }, { "test_crypto", false },
   { "test_noise", false }, { "test_session", false }, { "test_packets", true }, { "test_server", false },
-  { "test_ui", true }, { "test_account", false }, { "test_link", false },
+  { "test_ui", true }, { "test_rich", true }, { "test_account", false }, { "test_link", false },
 }
 
 local T = require("testlib")

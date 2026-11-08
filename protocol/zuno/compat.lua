@@ -77,4 +77,22 @@ function compat.utf8_len(s)
   return count
 end
 
+-- Byte position where code point number n starts (n >= 1), or #s + 1 past the end.
+function compat.utf8_offset(s, n)
+  local count = 0
+  for i = 1, #s do
+    local c = s:byte(i)
+    if c < 0x80 or c >= 0xC0 then
+      count = count + 1
+      if count == n then return i end
+    end
+  end
+  return #s + 1
+end
+
+-- Cut to at most n code points.
+function compat.utf8_sub(s, n)
+  return s:sub(1, compat.utf8_offset(s, n + 1) - 1)
+end
+
 return compat

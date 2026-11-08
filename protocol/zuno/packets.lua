@@ -13,17 +13,21 @@ P.LIMITS = {
   topic_chars = 200,
   history_page = 50,
   since_max = 500,        -- max changes returned on resume before asking for a full reload
+  reactions_per_message = 20, -- different emoji on one message
+  reply_preview = 120,    -- characters of the replied-to message sent along
 }
 
 -- Field specs:  "int", "bool", "str:N" (N bytes max, valid UTF-8), "text:N" (N code points,
 -- valid UTF-8, not blank), "name" (1..32 chars, no control chars), "key" (64 hex chars),
--- "enum:a|b", prefix "?" = optional.
+-- "enum:a|b", "emoji" (one emoji: 1..32 bytes, no letters, digits, spaces or controls),
+-- prefix "?" = optional.
 P.client = {
   ping          = { n = "?int" },
   sync          = {},
   history       = { ch = "int", before = "?int", limit = "?int" },
   since         = { ch = "int", rev = "int" },
-  send          = { ch = "int", body = "text:4000", nonce = "?str:40" },
+  send          = { ch = "int", body = "text:4000", nonce = "?str:40", reply = "?int" }, -- reply: v2
+  react         = { id = "int", e = "emoji", on = "bool" },                                -- v2
   edit          = { id = "int", body = "text:4000" },
   delete        = { id = "int" },
   typing        = { ch = "int" },
@@ -83,6 +87,10 @@ local function check_field(spec, v)
     return type(v) == "string" and #v >= 1 and #v <= 32 and v:match("^[%w%-_]+$") ~= nil
   elseif kind == "key" then
     return type(v) == "string" and #v == 64 and not v:find("[^0-9a-f]")
+  elseif kind == "emoji" then
+    -- The server can't know every emoji, so it only refuses things that are clearly text.
+    if type(v) ~= "string" or #v < 1 or #v > 32 or not compat.valid_utf8(v) then return false end
+    return not v:find("[%z\1-\127]") or v:match("^[#*0-9]\239\184\143\226\131\163$") ~= nil -- or a keycap
   elseif kind == "enum" then
     if type(v) ~= "string" then return false end
     for opt in arg:gmatch("[^|]+") do if opt == v then return true end end

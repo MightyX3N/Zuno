@@ -351,6 +351,112 @@ S["old clients get a clear version error"] = function()
   srv:stop()
 end
 
+S["replies, reactions and mentions"] = function()
+  local srv = start_server(tmpdir())
+  local a = new_client(srv.port, "alice")
+  local b = new_client(srv.port, "bob")
+  local all = { a, b }
+  run_until(srv, all, function() return a.me and b.me end, 5, "synced")
+  T.ok(a:supports("reply") and a:supports("react"), "protocol 2")
+  local ch = general(a)
+  a:view(ch); b:view(nil)
+  run_until(srv, all, function() return a:store_for(ch).loaded end)
+  a:send_message(ch, "question for <@" .. b.me.user .. ">")
+  run_until(srv, all, function() return b.unread[ch] == 1 end, 5, "bob got it")
+  T.eq(b.mentions[ch], 1, "mention counted for bob")
+  local incoming
+  for _, e in ipairs(b.events) do if e[1] == "incoming" then incoming = e end end
+  T.ok(incoming and incoming[3] == true, "incoming event says it pings bob")
+
+  b:view(ch)
+  T.eq(b.mentions[ch], nil, "viewing clears mentions")
+  run_until(srv, all, function() return b:store_for(ch).loaded end)
+  local q = b:store_for(ch).list[1]
+  b:send_message(ch, "answer", q.id)
+  run_until(srv, all, function() return #a:store_for(ch).list == 2 end, 5, "reply arrived")
+  local r = a:store_for(ch).list[2]
+  T.eq(r.reply.id, q.id); T.eq(r.reply.a, a.me.user); T.eq(r.reply.b, "question for <@" .. b.me.user .. ">")
+
+  -- reactions: add, second person, remove, limits
+  a:react(r, "👍")
+  run_until(srv, all, function() return b:store_for(ch).by_id[r.id].rx ~= nil end, 5, "reaction arrived")
+  T.eq(b:store_for(ch).by_id[r.id].rx[1][1], "👍")
+  b:react(b:store_for(ch).by_id[r.id], "👍")
+  run_until(srv, all, function() local x = a:store_for(ch).by_id[r.id].rx; return x and #x[1][2] == 2 end, 5, "two people")
+  T.ok(a:reacted(a:store_for(ch).by_id[r.id], "👍"))
+  a:react(a:store_for(ch).by_id[r.id], "👍") -- toggle off
+  run_until(srv, all, function() local x = b:store_for(ch).by_id[r.id].rx; return x and #x[1][2] == 1 end, 5, "removed")
+  a:send({ t = "react", id = r.id, e = "abc", on = true })
+  run_until(srv, all, function() for _, e in ipairs(a.events) do if e[1] == "error" then return true end end end, 5, "bad emoji refused")
+  for i = 1, 20 do srv.store:set_reaction(r.id, string.rep("c", 64), "🔥" .. string.rep("✨", i), true, i, 40) end
+  local before = #a.events
+  a:react(a:store_for(ch).by_id[r.id], "😀", true)
+  run_until(srv, all, function()
+    for i = before + 1, #a.events do if a.events[i][1] == "error" and tostring(a.events[i][2]):find("up to 20") then return true end end
+  end, 5, "too many different reactions")
+
+  -- reacting to a missing message, replying across channels
+  a:send({ t = "react", id = 99999, e = "👍", on = true })
+  b:send({ t = "send", ch = ch, body = "x", reply = 99999 })
+  run_until(srv, all, function()
+    for _, e in ipairs(b.events) do if e[1] == "error" and tostring(e[2]):find("replied to") then return true end end
+  end, 5, "reply to a missing message refused")
+
+  -- editing keeps reactions and marks the message edited for everyone
+  b:edit_message(r.id, "answer, edited")
+  run_until(srv, all, function() return a:store_for(ch).by_id[r.id].body == "answer, edited" end, 5, "edit arrived")
+  T.ok(a:store_for(ch).by_id[r.id].edited, "edited mark")
+  T.ok(a:store_for(ch).by_id[r.id].rx, "reactions kept")
+
+  -- deleting the original: the reply shows it's gone after a reload
+  a:delete_message(q.id)
+  run_until(srv, all, function() return b:store_for(ch).by_id[q.id] == nil end)
+  local rows = srv:_rows_out({ srv.store:message(r.id) })
+  T.ok(rows[1].reply.gone, "reply preview of a deleted message")
+  srv:stop()
+end
+
+S["protocol 1 clients still chat; replies are dropped for them"] = function()
+  local srv = start_server(tmpdir())
+  local old = new_client(srv.port, "old")
+  old.env.max_version = 1
+  local new = new_client(srv.port, "new")
+  local all = { old, new }
+  run_until(srv, all, function() return old.me and new.me end, 5, "synced")
+  T.eq(old.session_version, 1); T.ok(not old:supports("react"))
+  local ch = general(old)
+  old:view(ch); new:view(ch)
+  run_until(srv, all, function() return old:store_for(ch).loaded and new:store_for(ch).loaded end)
+  new:send_message(ch, "hi")
+  run_until(srv, all, function() return #old:store_for(ch).list == 1 end)
+  old:send_message(ch, "reply from old", old:store_for(ch).list[1].id) -- reply ignored, message sent
+  run_until(srv, all, function() return #new:store_for(ch).list == 2 end)
+  T.eq(new:store_for(ch).list[2].reply, nil)
+  srv:stop()
+end
+
+S["a schema 1 database is upgraded in place"] = function()
+  local dir = tmpdir()
+  os.execute("mkdir -p " .. dir)
+  local sqlite = require("zuno_server.sqlite")
+  local db = sqlite.open(dir .. "/zuno.db")
+  db:exec([[CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT);
+    CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, ch INTEGER NOT NULL, author TEXT NOT NULL,
+      body TEXT NOT NULL, at INTEGER NOT NULL, edited INTEGER, deleted INTEGER NOT NULL DEFAULT 0, rev INTEGER NOT NULL);
+    INSERT INTO meta (k, v) VALUES ('schema', '1'), ('rev', '1');
+    INSERT INTO messages (ch, author, body, at, rev) VALUES (1, 'aa', 'old message', 1, 1);]])
+  db:close()
+  local Store = require("zuno_server.store")
+  local st = Store.open(dir .. "/zuno.db")
+  T.eq(st:meta("schema"), "2")
+  T.eq(st:message(1).body, "old message"); T.eq(st:message(1).reply_to, nil)
+  local m = st:add_message(1, "bb", "reply", 2, 1)
+  T.eq(m.reply_to, 1)
+  T.ok(st:set_reaction(1, "bb", "👍", true, 3, 20))
+  T.eq(st:reactions({ 1 })[1][1][1], "👍")
+  st:close()
+end
+
 S["hosting owner becomes owner on first connect; names update on reconnect"] = function()
   local seed = C.ed25519_new_seed()
   local key = compat.hex(C.ed25519_public(seed))

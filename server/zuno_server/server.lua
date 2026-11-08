@@ -328,15 +328,46 @@ function Server:run(should_stop)
 end
 
 --------------------------------------------------------------------- packet helpers
-local function msg_out(row, nonce)
-  return {
-    t = "msg", id = row.id, ch = row.ch, a = row.author, at = row.at, body = row.body,
-    edited = row.edited, deleted = row.deleted == 1 or nil, rev = row.rev, nonce = nonce,
-  }
+-- Short preview of a replied-to message (so clients can show it without loading it).
+local function reply_preview(row)
+  if not row then return { gone = true } end
+  if row.deleted == 1 then return { id = row.id, gone = true } end
+  local b = row.body -- formatting is kept: clients make their own one-line preview
+  if compat.utf8_len(b) > P.LIMITS.reply_preview then
+    b = b:sub(1, compat.utf8_offset(b, P.LIMITS.reply_preview + 1) - 1):gsub("<@%x*$", "") .. "…"
+  end
+  return { id = row.id, a = row.author, b = b }
 end
 
-local function msg_entry(row)
-  local m = msg_out(row); m.t = nil
+local function msg_fields(row, rx, replied)
+  local m = {
+    id = row.id, ch = row.ch, a = row.author, at = row.at, body = row.body,
+    edited = row.edited, deleted = row.deleted == 1 or nil, rev = row.rev,
+  }
+  if row.deleted ~= 1 then
+    if row.reply_to then m.reply = reply_preview(replied); m.reply.id = row.reply_to end
+    m.rx = rx -- { {emoji, {keys}}, ... } or nil
+  end
+  return m
+end
+
+-- Message rows -> wire tables, with their reactions and reply previews (batched).
+function Server:_rows_out(rows)
+  local ids, reply_ids = {}, {}
+  for i, row in ipairs(rows) do
+    ids[i] = row.id
+    if row.reply_to then reply_ids[#reply_ids + 1] = row.reply_to end
+  end
+  local rx = self.store:reactions(ids)
+  local replied = self.store:messages_by_id(reply_ids)
+  local out = {}
+  for i, row in ipairs(rows) do out[i] = msg_fields(row, rx[row.id], row.reply_to and replied[row.reply_to]) end
+  return out
+end
+
+function Server:_msg_out(row, nonce)
+  local m = self:_rows_out({ row })[1]
+  m.t, m.nonce = "msg", nonce
   return m
 end
 
@@ -379,9 +410,7 @@ function H.history(self, conn, pkt)
   if not ch or ch.kind ~= "text" then return self:_err(conn, pkt, P.ERR.not_found, "no such channel") end
   local limit = math.max(1, math.min(pkt.limit or P.LIMITS.history_page, P.LIMITS.history_page))
   local rows, more = self.store:history(ch.id, pkt.before, limit)
-  local list = {}
-  for i, row in ipairs(rows) do list[i] = msg_entry(row) end
-  self:send(conn, { t = "messages", ch = ch.id, list = list, more = more, before = pkt.before, re = pkt.q })
+  self:send(conn, { t = "messages", ch = ch.id, list = self:_rows_out(rows), more = more, before = pkt.before, re = pkt.q })
 end
 
 function H.since(self, conn, pkt)
@@ -389,9 +418,7 @@ function H.since(self, conn, pkt)
   if not ch or ch.kind ~= "text" then return self:_err(conn, pkt, P.ERR.not_found, "no such channel") end
   local rows = self.store:since(ch.id, pkt.rev, P.LIMITS.since_max)
   if not rows then return self:send(conn, { t = "messages", ch = ch.id, list = {}, reset = true, re = pkt.q }) end
-  local list = {}
-  for i, row in ipairs(rows) do list[i] = msg_entry(row) end
-  self:send(conn, { t = "messages", ch = ch.id, list = list, since = pkt.rev, re = pkt.q })
+  self:send(conn, { t = "messages", ch = ch.id, list = self:_rows_out(rows), since = pkt.rev, re = pkt.q })
 end
 
 function H.send(self, conn, pkt)
@@ -400,8 +427,16 @@ function H.send(self, conn, pkt)
   if not ch or ch.kind ~= "text" then return self:_err(conn, pkt, P.ERR.not_found, "no such channel") end
   local body = P.clean_text(pkt.body)
   if body == "" then return self:_err(conn, pkt, P.ERR.invalid, "empty message") end
-  local row = self.store:add_message(ch.id, conn.user, body, now_ms())
-  self:broadcast(msg_out(row, pkt.nonce))
+  local reply
+  if pkt.reply then
+    local target = self.store:message(pkt.reply)
+    if not target or target.ch ~= ch.id or target.deleted == 1 then
+      return self:_err(conn, pkt, P.ERR.not_found, "the message you replied to is gone")
+    end
+    reply = target.id
+  end
+  local row = self.store:add_message(ch.id, conn.user, body, now_ms(), reply)
+  self:broadcast(self:_msg_out(row, pkt.nonce))
 end
 
 function H.edit(self, conn, pkt)
@@ -412,7 +447,7 @@ function H.edit(self, conn, pkt)
   local body = P.clean_text(pkt.body)
   if body == "" then return self:_err(conn, pkt, P.ERR.invalid, "empty message") end
   if body == row.body then return end
-  self:broadcast(msg_out(self.store:edit_message(row.id, body, now_ms())))
+  self:broadcast(self:_msg_out(self.store:edit_message(row.id, body, now_ms())))
 end
 
 function H.delete(self, conn, pkt)
@@ -421,7 +456,18 @@ function H.delete(self, conn, pkt)
   if row.author ~= conn.user and not self:_is_owner(conn.user) then
     return self:_err(conn, pkt, P.ERR.forbidden, "you can only delete your own messages")
   end
-  self:broadcast(msg_out(self.store:delete_message(row.id)))
+  self:broadcast(self:_msg_out(self.store:delete_message(row.id)))
+end
+
+function H.react(self, conn, pkt)
+  if not take(conn.sends) then return self:_err(conn, pkt, P.ERR.rate_limited, "slow down a little") end
+  local row = self.store:message(pkt.id)
+  if not row or row.deleted == 1 then return self:_err(conn, pkt, P.ERR.not_found, "no such message") end
+  local updated, why = self.store:set_reaction(row.id, conn.user, pkt.e, pkt.on, now_ms(), P.LIMITS.reactions_per_message)
+  if why == "too_many" then
+    return self:_err(conn, pkt, P.ERR.too_long, ("a message can have up to %d different reactions"):format(P.LIMITS.reactions_per_message))
+  end
+  if updated then self:broadcast(self:_msg_out(updated)) end
 end
 
 function H.typing(self, conn, pkt)

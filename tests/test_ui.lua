@@ -36,7 +36,9 @@ local function fake_platform()
     fields[id] = fields[id] or { text = "", get = function(f) return f.text end, set = function(f, t) f.text = t end,
       layout = function() end, draw = function() end, height = function() return 20 end,
       focus = function(f) P.focused = f end, blur = function() end, focused = function(f) return P.focused == f end,
-      set_secret = function() end }
+      set_secret = function() end, cursor_pos = function(f) return #f.text end,
+      replace = function(f, a, b, t) f.text = f.text:sub(1, a) .. t .. f.text:sub(b + 1) end,
+      set_cursor = function() end, insert = function(f, t) f.text = f.text .. t end }
     return fields[id]
   end
   return P
@@ -87,10 +89,20 @@ S["welcome screen, then a server tab with a full chat"] = function()
     { id = 2, a = ctl.key, at = 1700000060000, body = "a much longer message " .. string.rep("word ", 60), rev = 2, edited = 1700000070000 },
   } })
   frame(app, P)
-  T.ok(has_text(P, "general"), "channel"); T.ok(has_text(P, "hello there"), "message")
+  T.ok(has_text(P, "general"), "channel"); T.ok(has_text(P, "hello") and has_text(P, "there"), "message")
   T.ok(has_text(P, "(edited)"), "edited mark"); T.ok(has_text(P, "nova"), "member")
   T.ok(has_text(P, "This is the start of #general"), "start of channel")
   T.eq(ctl.servers[1].name, "my-server", "server name remembered")
+
+  -- formatting, a reply, a mention of me and reactions all draw
+  conn:_on_packet({ t = "msg", id = 3, ch = 1, a = string.rep("b", 64), at = 1700000100000, rev = 4,
+    body = "**bold** `code` <@" .. ctl.key .. "> see https://example.com 😀\n> quoted\n```\nx = 1\n```",
+    reply = { id = 1, a = string.rep("b", 64), b = "hello there" }, rx = { { "👍", { ctl.key, string.rep("b", 64) } } } })
+  frame(app, P)
+  T.ok(has_text(P, "bold") and has_text(P, "code") and has_text(P, "@patrick"), "formatted text")
+  T.ok(has_text(P, "x = 1"), "code block"); T.ok(has_text(P, "https://example.com"), "link")
+  T.ok(has_text(P, "@nova"), "reply preview"); T.ok(has_text(P, "2"), "reaction count")
+  T.eq(conn.mentions[1], nil, "mentions in the open channel don't count")
 
   -- typing + unread + pending
   conn.typing[1] = { [string.rep("b", 64)] = P.now() + 5 }
@@ -107,6 +119,50 @@ S["welcome screen, then a server tab with a full chat"] = function()
   app.dialog = nil
   app:open_menu(10, 10, { { label = "Copy text", fn = function() end } })
   frame(app, P); T.ok(has_text(P, "Copy text"))
+end
+
+S["notifications follow the setting, focus and what's on screen"] = function()
+  local P = fake_platform()
+  local env = fake_env(P)
+  local shown, sounds = {}, 0
+  env.notify = function(t, b) shown[#shown + 1] = t .. " | " .. b end
+  env.sound = function() sounds = sounds + 1 end
+  local ctl = Controller.new(env)
+  ctl:add_server("example.com:5")
+  local entry, conn = ctl.servers[1], ctl:conn()
+  conn.me = { user = ctl.key }
+  conn.members = { [string.rep("b", 64)] = { name = "nova" }, [ctl.key] = { name = "me" } }
+  conn.channel_by_id = { [1] = { id = 1, name = "general" }, [2] = { id = 2, name = "random" } }
+  local function msg(body, ch, reply)
+    P.now_t = P.now_t + 5 -- past the burst gap
+    conn:_emit("incoming", { ch = ch or 1, a = string.rep("b", 64), body = body, reply = reply }, conn:pings_me({ a = string.rep("b", 64), body = body, reply = reply }))
+  end
+  ctl.viewing = { focused = false }
+  msg("plain")
+  T.eq(#shown, 0, "mentions mode ignores plain messages")
+  msg("hi <@" .. ctl.key .. "> **look**")
+  T.eq(shown[1], "nova mentioned you in #general | hi @me look")
+  msg("ok", 1, { id = 3, a = ctl.key, b = "x" })
+  T.ok(shown[2]:find("replied to you"), "replies notify")
+  ctl.viewing = { focused = true, entry = entry, ch = 1 }
+  msg("<@" .. ctl.key .. "> again")
+  T.eq(#shown, 2, "nothing while the channel is on screen")
+  ctl.viewing = { focused = true, entry = entry, ch = 2 }
+  msg("<@" .. ctl.key .. "> elsewhere")
+  T.eq(#shown, 2, "focused: a toast, not a system notification")
+  T.ok(#ctl.toasts > 0)
+  ctl:set_notify("all"); ctl.viewing = { focused = false }
+  msg("plain again")
+  T.eq(#shown, 3, "all messages mode")
+  conn:_emit("incoming", { ch = 1, a = string.rep("b", 64), body = "burst" }, false)
+  T.eq(#shown, 3, "bursts make one notification")
+  ctl:set_sound(false); ctl:set_notify("off")
+  msg("<@" .. ctl.key .. ">")
+  T.eq(#shown, 3, "off")
+  T.eq(sounds, 4)
+  -- settings survive a restart
+  local ctl2 = Controller.new(env)
+  T.eq(ctl2.settings.notify, "off"); T.eq(ctl2.settings.sound, false)
 end
 
 S["connection states draw their panels"] = function()

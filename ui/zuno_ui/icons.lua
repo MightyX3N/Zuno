@@ -47,6 +47,20 @@ function I.draw(P, name, x, y, s, color, width)
     L({ 5, 5.5, 6, 17, 14, 17, 15, 5.5 })
   elseif name == "dots" then
     for i = 0, 2 do P.circle(x + (5 + i * 5) * k, y + 10 * k, 1.4 * k, color) end
+  elseif name == "smile" then
+    P.circle_line(x + 10 * k, y + 10 * k, 7.5 * k, color, w)
+    P.circle(x + 7.3 * k, y + 8 * k, 1.1 * k, color); P.circle(x + 12.7 * k, y + 8 * k, 1.1 * k, color)
+    L({ 6.5, 11.8, 8, 13.6, 10, 14.3, 12, 13.6, 13.5, 11.8 })
+  elseif name == "react" then -- smiley with a plus
+    P.circle_line(x + 9 * k, y + 11 * k, 6.5 * k, color, w)
+    P.circle(x + 6.8 * k, y + 9.5 * k, 1 * k, color); P.circle(x + 11.2 * k, y + 9.5 * k, 1 * k, color)
+    L({ 6, 12.6, 7.4, 14.2, 9, 14.7, 10.6, 14.2, 12, 12.6 })
+    L({ 16.5, 1.5, 16.5, 7.5 }); L({ 13.5, 4.5, 19.5, 4.5 })
+  elseif name == "reply" then
+    L({ 8, 4, 3, 9, 8, 14 }); L({ 3, 9, 12, 9, 15, 10, 17, 12.5, 17.5, 16 })
+  elseif name == "at" then
+    P.circle_line(x + 10 * k, y + 10 * k, 3 * k, color, w)
+    L({ 13, 7, 13, 11.5, 14.5, 13, 16.2, 12.6, 17, 10, 16, 6.2, 13, 3.6, 9, 3.2, 5.4, 4.8, 3.3, 8, 3.3, 12, 5.4, 15.2, 9, 16.8, 13, 16.3 })
   elseif name == "sun" then
     P.circle_line(x + 10 * k, y + 10 * k, 3.5 * k, color, w)
     for i = 0, 7 do

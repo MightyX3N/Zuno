@@ -178,6 +178,20 @@ Keys are free to make, so anyone can create endless identities. Servers need gat
 - **Backup / restore**: one command exports database, server key, config, layouts and addons into one file; restore on a new machine to move hosts.
 - Users can delete their own messages, and ask the server to delete everything they posted ("leave and delete my data").
 
+### 5.11 Message formatting, mentions, replies, reactions (built, protocol 2)
+- Messages stay plain text on the wire; every client formats them the same way (`ui/zuno_ui/rich.lua`). Supported: `**bold**`, `*italic*` / `_italic_` (not inside words, so snake_case is safe), `~~strike~~`, `` `code` ``, fenced code blocks, `> quote`, `- bullets`, `#`/`##`/`###` headings, `\` escapes, and http(s) links (opening one asks first). No masked links like `[text](url)`: the address you click is always the one you see.
+- **Emoji** are real Unicode in messages, drawn from one Twemoji sheet (1,900 emoji, CC-BY 4.0, ~0.7 MB). Text fields can't draw colour emoji, so the composer shows `:shortcodes:` (typing `:jo` suggests, the picker inserts them, pasted emoji turn into them) and they become Unicode when sent. Messages that are only emoji (up to 10) show large. Custom per-server emoji wait for uploads (2C).
+- **Mentions** are stored as `<@key>` (survive renames; the server rewrites them on "Replace my key"). The composer turns `@Name` into them, with suggestions after `@`. Mentions and replies to you are highlighted and counted in red badges on the channel and the server tab.
+- **Replies**: `send` takes `reply = id` (same channel). Messages carry a preview of what they reply to (`reply = {id, a, b}`, first 120 characters, or `gone` once deleted); clicking it jumps to the original (loading older pages if needed).
+- **Reactions**: `react {id, e, on}`; up to 20 different emoji per message; any emoji the server can't rule out as text is accepted (clients show unknown ones as text). Each change bumps the message revision, so resuming clients get it. Hover shows who reacted.
+- Protocol 2 adds `reply` and `react`. Version 1 clients still chat: they just don't see the reply/react buttons and ignore the new fields.
+
+### 5.12 Notifications while Zuno runs (built)
+- Setting: **All messages / Mentions & replies (default) / Nothing**, plus a sound (made in code, no file) and a "Send a test" button.
+- Nothing is shown for the channel you're looking at in a focused window. In a focused window other messages show as an in-app toast; in the background they become a system notification (Windows: tray balloon, shown as a normal Windows notification; Linux: `notify-send`; macOS: `osascript`) and the taskbar entry flashes. Bursts within 2 seconds make one notification.
+- Streamer mode hides the message text in notifications.
+- Notifications while Zuno is closed need a push relay (see Later / ideas).
+
 ## 6. Layouts and modding
 
 ### 6.0 One UI, two thin backends
@@ -328,9 +342,10 @@ tests/      test runner + suites (LuaJIT, and Lua 5.4 for the shared code)
 - [x] `web/link/` handler page
 - [x] Streamer mode (blur + reveal, Copy buttons, OBS/Streamlabs auto-detect on desktop)
 - [x] "Replace my key" hand-over (server-owner dispute tools: Phase 3)
-- [ ] Markdown, mentions, replies, reactions, custom emoji
+- [x] Markdown, mentions, replies, reactions, emoji (Twemoji, picker, :shortcodes:)
+- [ ] Custom emoji per server (needs uploads)
 - [ ] File and image uploads (chunked over TCP), avatars
-- [ ] Notifications while the app is running
+- [x] Notifications while the app is running
 - [ ] Direct file sharing: offer / accept / decline prompt
 - [ ] Direct file sharing: end-to-end encryption for the receiver's key
 - [ ] Direct file sharing: P2P via UDP hole punching (native), server as signaling

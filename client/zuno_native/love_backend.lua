@@ -7,6 +7,8 @@ local font_files = {
   regular = "assets/fonts/Inter-400.ttf", medium = "assets/fonts/Inter-500.ttf",
   semibold = "assets/fonts/Inter-600.ttf", bold = "assets/fonts/Inter-700.ttf",
   head = "assets/fonts/SpaceGrotesk-500.ttf", head_bold = "assets/fonts/SpaceGrotesk-700.ttf",
+  italic = "assets/fonts/Inter-400i.ttf", bold_italic = "assets/fonts/Inter-600i.ttf",
+  mono = "assets/fonts/JetBrainsMono-400.ttf",
 }
 local fonts = {}
 
@@ -62,6 +64,28 @@ function P.wrap(font, str, width)
   local _, lines = font:getWrap(str, math.max(10, width))
   if #lines == 0 then lines = { "" } end
   return lines
+end
+
+------------------------------------------------------------------ images
+local images, quads = {}, {}
+function P.image(path)
+  if images[path] == nil then
+    local ok, img = pcall(lg.newImage, path, { mipmaps = true })
+    if ok then img:setFilter("linear", "linear"); img:setMipmapFilter("linear") end
+    images[path] = ok and img or false
+  end
+  return images[path] or nil
+end
+
+-- Draw part of an image (sx, sy, sw, sh in image pixels) into the box x, y, w, h.
+function P.draw_image(img, x, y, w, h, sx, sy, sw, sh, c)
+  local iw, ih = img:getDimensions()
+  sx, sy, sw, sh = sx or 0, sy or 0, sw or iw, sh or ih
+  local key = tostring(img) .. sx .. ":" .. sy .. ":" .. sw .. ":" .. sh
+  local q = quads[key]
+  if not q then q = lg.newQuad(sx, sy, sw, sh, iw, ih); quads[key] = q end
+  if c then color(c) else lg.setColor(1, 1, 1, 1) end
+  lg.draw(img, q, math.floor(x + 0.5), math.floor(y + 0.5), 0, w / sw, h / sh)
 end
 
 local clip_stack = {}
@@ -188,6 +212,40 @@ function P.recording_detected()
   return rec_state
 end
 
+------------------------------------------------------------------ notifications
+local notify = require("zuno_native.notify")
+-- The window icon, and a copy of the .ico on disk for the Windows tray (it needs a real file).
+function P.set_app_icon()
+  pcall(function() love.window.setIcon(love.image.newImageData("assets/icon/zuno-64.png")) end)
+  pcall(function()
+    local data = love.filesystem.read("assets/icon/zuno.ico")
+    if data and love.filesystem.write("zuno.ico", data) then notify.icon_path = love.filesystem.getSaveDirectory() .. "/zuno.ico" end
+  end)
+end
+function P.window_focused() return love.window.hasFocus() end
+function P.notify(title, body) pcall(notify.show, title, body) end
+function P.attention() pcall(notify.flash) end
+
+-- A short two-note chime, made here so no sound file is needed.
+local chime
+function P.play_sound(name)
+  if not love.audio then return end
+  if not chime then
+    local rate = 44100
+    local len = math.floor(rate * 0.32)
+    local sd = love.sound.newSoundData(len, rate, 16, 1)
+    for i = 0, len - 1 do
+      local t = i / rate
+      local f = t < 0.11 and 880 or 1318.5
+      local local_t = t < 0.11 and t or (t - 0.11)
+      local env = math.exp(-local_t * 18) * math.min(1, local_t * 400)
+      sd:setSample(i, math.sin(2 * math.pi * f * t) * env * 0.25)
+    end
+    chime = love.audio.newSource(sd, "static")
+  end
+  chime:stop(); chime:play()
+end
+
 ------------------------------------------------------------------ text fields
 local Field = {}
 Field.__index = Field
@@ -281,6 +339,8 @@ end
 function Field:focus() focused_field = self; self.blink = love.timer.getTime() end
 function Field:blur() if focused_field == self then focused_field = nil end; self.anchor = nil end
 function Field:focused() return focused_field == self end
+function Field:cursor_pos() return self.cursor end
+function Field:replace(a, b, s) self:_replace(a, b, s) end
 
 -- Cursor position -> line index and x offset
 function Field:_locate(pos)
@@ -380,6 +440,7 @@ local function clamp_pos(text, pos)
   while pos > 0 and pos < #text and text:byte(pos + 1) >= 0x80 and text:byte(pos + 1) < 0xC0 do pos = pos - 1 end
   return pos
 end
+function Field:set_cursor(pos) self.cursor = clamp_pos(self.text, pos); self.anchor = nil end
 
 local function prev_char(text, pos)
   if pos <= 0 then return 0 end

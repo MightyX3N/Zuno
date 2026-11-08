@@ -11,8 +11,8 @@ function love.conf(t)
   t.window.highdpi = true
   t.window.vsync = 1
   t.window.msaa = 4
-  t.modules.audio = false    -- voice arrives in a later phase
-  t.modules.sound = false
+  t.modules.audio = true     -- notification sound (voice comes later)
+  t.modules.sound = true
   t.modules.joystick = false
   t.modules.physics = false
   t.modules.video = false

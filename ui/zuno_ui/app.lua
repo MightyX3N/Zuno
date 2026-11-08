@@ -4,6 +4,10 @@ local Icons = require("zuno_ui.icons")
 local P_ = require("zuno.packets")
 local version = require("zuno.version")
 local AccountUI = require("zuno_ui.account_ui")
+local Rich = require("zuno_ui.rich")
+local E = require("zuno_ui.emoji")
+local Compose = require("zuno_ui.compose")
+local Picker = require("zuno_ui.emoji_picker")
 local LinkUI = require("zuno_ui.link_ui")
 
 local App = {}
@@ -18,6 +22,7 @@ function App.new(ui, P, ctl, pack)
   self.views = {}            -- entry -> per-server view state
   self.page = nil            -- nil (server), "add"
   self.wrap_cache, self.wrap_count = {}, 0
+  self.rich_cache, self.rich_count = {}, 0
   self.fonts = {}
   self.menu, self.dialog = nil, nil
   self.settings_open = false
@@ -178,6 +183,9 @@ function App:draw()
   ui:begin(w, h)
   P.rect(0, 0, w, h, T.app)
 
+  -- what the user is looking at decides which messages notify
+  self.ctl.viewing = { focused = (not P.window_focused) or P.window_focused() }
+  self.ctl.streamer_on = self:streamer() -- notifications don't show message text while streaming
   self:draw_tabs(w)
   local conn = self.ctl:conn()
   local body_y = TAB_BAR_H
@@ -195,6 +203,7 @@ function App:draw()
     elseif self.modal.draw then self.modal.draw(self, w, h) end
   end
   if self.dialog then self:draw_dialog(w, h) end
+  if self.picker then Picker.draw(self) end
   if self.menu then self:draw_menu(w, h) end
   self:draw_toasts(w, h)
   ui:draw_tooltip(T, self:font("medium", 12))
@@ -203,6 +212,7 @@ function App:draw()
   -- global keys
   if ui:pressed("escape") then
     if self.menu then self.menu = nil
+    elseif self.picker then self.picker = nil
     elseif self.dialog then self.dialog = nil
     elseif self.modal and not self.modal.sticky then self.modal = nil
     elseif self.settings_open then self.settings_open = false end
@@ -224,11 +234,12 @@ function App:draw_tabs(w)
   for i, entry in ipairs(ctl.servers) do
     local conn = ctl.conns[entry]
     local name = entry.name or entry.address:gsub("#.*$", "")
-    local unread = 0
+    local unread, pings = 0, 0
     for _, n in pairs(conn.unread) do unread = unread + n end
-    local cnt = unread > 0 and tostring(unread) or ""
+    for _, n in pairs(conn.mentions) do pings = pings + n end
+    local cnt = pings > 0 and ("@" .. pings) or (unread > 0 and tostring(unread) or "")
     local tw = math.min(180, P.measure(f, name))
-    local cw = cnt ~= "" and (P.measure(self:font("regular", 12), cnt) + 8) or 0
+    local cw = cnt ~= "" and (P.measure(self:font(pings > 0 and "semibold" or "regular", 12), cnt) + (pings > 0 and 20 or 8)) or 0
     local tab_w = 16 + 22 + 10 + tw + cw + 16
     if x + tab_w > w - right_reserved - 60 then break end
     local active = self.page ~= "add" and ctl.active == i
@@ -241,7 +252,13 @@ function App:draw_tabs(w)
     local fi = self:font("head_bold", 12)
     P.text(initial, x + 16 + (22 - P.measure(fi, initial)) / 2, 20 + (22 - P.line_height(fi)) / 2, fi, { 1, 1, 1, 1 })
     ui:text_fit(name, x + 48, 31 - P.line_height(f) / 2, tw, f, T.text)
-    if cnt ~= "" then P.text(cnt, x + 48 + tw + 8, 31 - P.line_height(self:font("regular", 12)) / 2, self:font("regular", 12), T.faint) end
+    if pings > 0 then
+      local bf = self:font("semibold", 12)
+      P.rect(x + 48 + tw + 8, 22, P.measure(bf, cnt) + 12, 18, T.danger, 9)
+      P.text(cnt, x + 48 + tw + 14, 31 - P.line_height(bf) / 2, bf, T.on_accent)
+    elseif cnt ~= "" then
+      P.text(cnt, x + 48 + tw + 8, 31 - P.line_height(self:font("regular", 12)) / 2, self:font("regular", 12), T.faint)
+    end
     if conn.status ~= "online" then
       local dot = (conn.status == "key_changed" or conn.status == "outdated") and T.danger or T.idle
       P.circle(x + 38, 21, 4, T.bar); P.circle(x + 38, 21, 3, dot)
@@ -280,6 +297,7 @@ function App:draw_server(conn, x, y, w, h)
   if v.ch and not conn.channel_by_id[v.ch] and #conn.channels > 0 then v.ch = nil end
   if not v.ch and texts[1] then v.ch = texts[1].id end
   if conn.status == "online" and v.ch and conn.view_ch ~= v.ch then self:switch_channel(conn, entry, v, v.ch) end
+  self.ctl.viewing.entry, self.ctl.viewing.ch = entry, v.ch
 
   local show_info = w >= 1000
   local chat_w = w - NAV_W - (show_info and INFO_W or 0)
@@ -325,11 +343,14 @@ function App:draw_nav(conn, entry, v, x, y, w, h)
     local color = sel and T.sel_fg or (unread and T.text or T.soft)
     local face = (sel or unread) and "medium" or "regular"
     ui:text_fit(ch.name, cx + 10, cy + 17 - P.line_height(f) / 2, w - 28 - 20 - (unread and 30 or 0), self:font(face, 14), color)
-    if unread and not sel then
-      local s = unread > 99 and "99+" or tostring(unread)
+    local pings = conn.mentions[ch.id]
+    if (unread or pings) and not sel then
+      -- red with the number of mentions, otherwise the number of unread messages
+      local n = pings or unread
+      local s = (pings and "@" or "") .. (n > 99 and "99+" or tostring(n))
       local bf = self:font("semibold", 12)
       local bw = P.measure(bf, s) + 14
-      P.rect(cx + w - 28 - bw - 8, cy + 8, bw, 18, T.accent, 9)
+      P.rect(cx + w - 28 - bw - 8, cy + 8, bw, 18, pings and T.danger or T.accent, 9)
       P.text(s, cx + w - 28 - bw - 8 + 7, cy + 17 - P.line_height(bf) / 2, bf, T.on_accent)
     end
     if st.clicked and not sel and conn.status == "online" then self:switch_channel(conn, entry, v, ch.id) end
@@ -430,11 +451,57 @@ function App:draw_info(conn, entry, x, y, w, h)
 end
 
 ----------------------------------------------------------------- chat
+local FACES = { regular = { "regular", 14 }, bold = { "bold", 14 }, italic = { "italic", 14 }, bold_italic = { "bold_italic", 14 },
+  mono = { "mono", 13 }, h1 = { "head_bold", 22 }, h2 = { "head_bold", 18 }, h3 = { "head_bold", 16 } }
+
+function App:rich_ctx(conn)
+  local ctx = self._rich_ctx
+  if not ctx then
+    ctx = { P = self.P }
+    ctx.font = function(face) local d = FACES[face] or FACES.regular; return self:font(d[1], d[2]) end
+    ctx.lh = math.floor(self.P.line_height(self:font("regular", 14)) * 1.5 + 0.5)
+    self._rich_ctx = ctx
+  end
+  ctx.name_for = function(k) return conn:member_name(k) end
+  return ctx
+end
+
+-- Formatted message layout, cached (names of mentioned people are part of the key).
+function App:rich(conn, body, width)
+  local key = width .. "|" .. body
+  if body:find("<@", 1, true) then
+    key = key .. "|" .. (body:gsub("<@(%x+)>", function(k) return conn:member_name(k) end))
+  end
+  local L = self.rich_cache[key]
+  if L then return L end
+  if self.rich_count > 3000 then self.rich_cache, self.rich_count = {}, 0 end
+  L = Rich.layout(body, width, self:rich_ctx(conn))
+  self.rich_cache[key] = L
+  self.rich_count = self.rich_count + 1
+  return L
+end
+
+local PILL_H, PILL_GAP = 28, 6
+-- Reaction pills of a message: { {x, y, w, emoji, count, idx}, ... }, height
+function App:reaction_layout(m, width)
+  local rx = m.rx
+  if not rx or #rx == 0 then return nil, 0 end
+  local f = self:font("semibold", 12)
+  local out, x, y = {}, 0, 0
+  for _, r in ipairs(rx) do
+    local cnt = tostring(#r[2])
+    local pw = 8 + 18 + 6 + self.P.measure(f, cnt) + 10
+    if x > 0 and x + pw > width - 40 then x = 0; y = y + PILL_H + PILL_GAP end
+    out[#out + 1] = { x = x, y = y, w = pw, emoji = r[1], count = cnt, keys = r[2], idx = E.lookup(r[1]) }
+    x = x + pw + PILL_GAP
+  end
+  out.add_x, out.add_y = x, y
+  return out, y + PILL_H + 6
+end
+
 function App:message_layout(conn, v, ch, width)
-  local P = self.P
   local s = conn:store_for(ch)
-  local body_f = self:font("regular", 14)
-  local lh = math.floor(P.line_height(body_f) * 1.5 + 0.5)
+  local lh = self:rich_ctx(conn).lh
   local text_w = width - 56 - 14
   local items, y = {}, 0
   local prev
@@ -451,15 +518,18 @@ function App:message_layout(conn, v, ch, width)
       prev = nil
     end
     if v.new_marker and m.id == v.new_marker then add({ kind = "new", h = 30 }); prev = nil end
-    local header = not prev or prev.a ~= m.a or (m.at - prev.at) > GROUP_GAP or pending ~= prev.pending
-    local lines = self:wrap(body_f, m.body, text_w)
-    local h = #lines * lh + (header and (14 + 23) or 6)
-    add({ kind = "msg", m = m, h = h, lines = lines, header = header, lh = lh, pending = pending })
+    local header = not prev or prev.a ~= m.a or (m.at - prev.at) > GROUP_GAP or pending ~= prev.pending or m.reply ~= nil
+    local L = self:rich(conn, m.body, text_w)
+    local reply_h = m.reply and 24 or 0
+    local pills, pills_h = self:reaction_layout(m, text_w)
+    local h = L.h + (header and (14 + 23) or 6) + reply_h + pills_h
+    add({ kind = "msg", m = m, h = h, rich = L, header = header, lh = lh, pending = pending, reply_h = reply_h, pills = pills })
     prev = { a = m.a, at = m.at, day = day, pending = pending }
   end
   for _, m in ipairs(s.list) do add_msg(m) end
   for _, pm in ipairs(conn:pending_for(ch)) do
-    add_msg({ id = -1, a = pm.a or self.ctl.key, at = math.floor(pm.at * 1000), body = pm.body, nonce = pm.nonce, state = pm.state, error = pm.error }, true)
+    add_msg({ id = -1, a = pm.a or self.ctl.key, at = math.floor(pm.at * 1000), body = pm.body, nonce = pm.nonce, state = pm.state,
+              error = pm.error, reply = pm.reply }, true)
   end
   return items, y
 end
@@ -506,11 +576,12 @@ function App:draw_chat(conn, entry, v, x, y, w, h)
   top = top + banner_h
 
   -- composer (measured first, list fills the rest)
-  local field = ch and P.field("composer:" .. entry.address .. ":" .. ch.id, { multiline = true, max_chars = P_.LIMITS.message_chars })
-  local comp_inner_w = w - 56 - 28 - 44 - 80
+  local field = ch and self:composer(entry, ch.id)
+  local comp_inner_w = w - 56 - 28 - 44 - 80 - 38
   local fh = field and math.max(20, math.min(160, field:height(comp_inner_w))) or 20
   local comp_h = fh + 24
-  local edit_bar = v.editing and 30 or 0
+  if v.replying and ch and not conn:store_for(ch.id).by_id[v.replying] then v.replying = nil end
+  local edit_bar = (v.editing or v.replying) and 30 or 0
   local typing_h = 22
   local comp_y = y + h - 20 - comp_h
   local list_bottom = comp_y - edit_bar - typing_h
@@ -533,6 +604,16 @@ function App:draw_chat(conn, entry, v, x, y, w, h)
   if v.editing then
     local by = comp_y - edit_bar
     P.text("Editing message · Esc to cancel, Enter to save", x + 32, by + 6, self:font("medium", 12), T.accent)
+  elseif v.replying then
+    local by = comp_y - edit_bar
+    local target = conn:store_for(ch.id).by_id[v.replying]
+    local rf = self:font("medium", 12)
+    local label = "Replying to "
+    P.text(label, x + 32, by + 6, rf, T.muted)
+    local nm = conn:member_name(target.a)
+    P.text(nm, x + 32 + P.measure(rf, label), by + 6, self:font("semibold", 12), Theme.pick(T.names, target.a))
+    P.text("· Esc to cancel", x + 32 + P.measure(rf, label) + P.measure(self:font("semibold", 12), nm) + 6, by + 6, rf, T.faint)
+    if self:icon_button("reply:cancel", "close", x + w - 28 - 26, by + 1, 24, "Cancel reply") then v.replying = nil end
   end
   -- composer box
   local cx, cw = x + 28, w - 56
@@ -546,25 +627,105 @@ function App:draw_chat(conn, entry, v, x, y, w, h)
   ui:hit("composer_field", cx + 44, comp_y, comp_inner_w + 8, comp_h, { cursor = "ibeam" })
   field:draw()
   local can_send = field:get():find("%S") ~= nil and conn.status == "online"
+  local eb = ui:hit("composer:emoji", cx + cw - 82 - 38, comp_y + comp_h - 44 + 6, 32, 32, { tip = "Emoji" })
+  if eb.hovered then P.rect(cx + cw - 82 - 38, comp_y + comp_h - 44 + 6, 32, 32, T.hover, 8) end
+  Icons.draw(P, "smile", cx + cw - 82 - 38 + 7, comp_y + comp_h - 44 + 13, 18, eb.hovered and T.text or T.faint)
+  if eb.clicked then
+    Picker.open(self, cx + cw - 82 - 22, comp_y, function(_, idx)
+      field:insert(":" .. E.name(idx) .. ": ")
+      field:focus()
+    end)
+  end
   if self:button("send", cx + cw - 82, comp_y + comp_h - 44 + 6, 72, 32, v.editing and "Save" or "Send", "primary", { disabled = not can_send }) then
     self:submit(conn, entry, v, ch, field)
   end
 
-  field.on_submit = function() self:submit(conn, entry, v, ch, field) end
-  field.on_change = function(text) if text ~= "" and not text:find("^/") and not v.editing then conn:typed(ch.id) end end
+  -- @mention and :emoji: suggestions for the word at the cursor
+  local sug = field:focused() and Compose.suggest(conn, field:get():sub(1, field:cursor_pos())) or nil
+  if sug and v.sug_dismissed == field:get() then sug = nil end
+  if sug then
+    local key = sug.kind .. #sug.items .. (sug.items[1].name or "")
+    if v.sug_key ~= key then v.sug_key = key; v.sug_sel = 1 end
+    v.sug_sel = math.max(1, math.min(v.sug_sel or 1, #sug.items))
+    self:draw_suggestions(conn, field, v, sug, cx, comp_y - edit_bar, math.min(cw, 420))
+  end
+  v.sug = sug
+
+  field.on_submit = function()
+    if v.sug then self:apply_suggestion(field, v.sug, v.sug.items[v.sug_sel or 1]); return end
+    self:submit(conn, entry, v, ch, field)
+  end
+  field.on_change = function(text)
+    -- pasted emoji become :shortcodes: (the field can't draw them)
+    if text:find("[\226-\244]") then
+      local conv = E.to_shortcodes(text)
+      if conv ~= text then
+        local from_end = #text - field:cursor_pos()
+        field:set(conv)
+        field:set_cursor(#conv - from_end)
+        return
+      end
+    end
+    v.sug_dismissed = nil
+    if text ~= "" and not text:find("^/") and not v.editing then conn:typed(ch.id) end
+  end
   field.on_key = function(key)
+    if v.sug then
+      if key == "up" then v.sug_sel = (v.sug_sel - 2) % #v.sug.items + 1; return true end
+      if key == "down" then v.sug_sel = v.sug_sel % #v.sug.items + 1; return true end
+      if key == "tab" then self:apply_suggestion(field, v.sug, v.sug.items[v.sug_sel]); return true end
+      if key == "escape" then v.sug_dismissed = field:get(); return true end
+    end
     if key == "up" and field:get() == "" then
       -- edit my last message
       local list = conn:store_for(ch.id).list
       for i = #list, 1, -1 do
         if list[i].a == self.ctl.key then
-          v.editing = list[i].id; field:set(list[i].body); return true
+          v.editing = list[i].id; v.replying = nil; field:set(Compose.to_field(conn, list[i].body)); return true
         end
       end
     elseif key == "escape" and v.editing then
       v.editing = nil; field:set(""); return true
+    elseif key == "escape" and v.replying then
+      v.replying = nil; return true
     end
     return false
+  end
+end
+
+function App:apply_suggestion(field, sug, item)
+  if not item then return end
+  local pos = field:cursor_pos()
+  field:replace(sug.from - 1, pos, Compose.insert_text(item))
+end
+
+function App:draw_suggestions(conn, field, v, sug, x, bottom, w)
+  local P, T, ui = self.P, self.T, self.ui
+  local row = 34
+  local h = 30 + #sug.items * row + 6
+  local y = bottom - h - 6
+  ui:hit("sug:card", x, y, w, h, { block = true, cursor = false })
+  P.rect(x + 1, y + 3, w, h, { 0, 0, 0, 0.1 }, 12)
+  P.rect(x, y, w, h, T.card, 12)
+  P.rect_line(x, y, w, h, T.line, 12, 1)
+  local title = sug.kind == "mention" and "Members" or "Emoji"
+  P.text(title:upper(), x + 14, y + 10, self:font("semibold", 11), T.faint)
+  P.text("Tab or Enter to pick", x + w - 14 - P.measure(self:font("regular", 11), "Tab or Enter to pick"), y + 10, self:font("regular", 11), T.faint)
+  local f = self:font("medium", 14)
+  for i, item in ipairs(sug.items) do
+    local iy = y + 30 + (i - 1) * row
+    local st = ui:hit("sug:" .. i, x + 4, iy, w - 8, row)
+    if st.hovered then v.sug_sel = i end
+    if i == v.sug_sel then P.rect(x + 4, iy, w - 8, row, T.sunken, 8) end
+    if item.emoji then
+      E.draw(P, item.emoji, x + 14, iy + 6, 22)
+      P.text(":" .. item.name .. ":", x + 46, iy + row / 2 - P.line_height(f) / 2, f, T.text)
+    else
+      self:avatar(item.key, item.name, x + 12, iy + 5, 24)
+      P.text(item.name, x + 46, iy + row / 2 - P.line_height(f) / 2, f, T.text)
+      if item.online then P.circle(x + 33, iy + 26, 4, T.card); P.circle(x + 33, iy + 26, 3, T.online) end
+    end
+    if st.clicked then self:apply_suggestion(field, sug, item); field:focus() end
   end
 end
 
@@ -573,13 +734,14 @@ function App:submit(conn, entry, v, ch, field)
   if not text:find("%S") then return end
   if conn.status ~= "online" then self.ctl:toast("Not connected yet.", "error"); return end
   if v.editing then
-    conn:edit_message(v.editing, text)
+    conn:edit_message(v.editing, Compose.to_wire(conn, text))
     v.editing = nil
   elseif text:find("^/%a") then
     conn:command(ch.id, text)
   else
-    if not conn:send_message(ch.id, text) then return end
+    if not conn:send_message(ch.id, Compose.to_wire(conn, text), v.replying) then return end
     v.new_marker = nil
+    v.replying = nil
   end
   field:set("")
   v.scroll = 0
@@ -600,6 +762,21 @@ function App:draw_messages(conn, entry, v, ch, x, y, w, h)
   -- near the top: load older messages
   if s.loaded and s.more and not s.loading and total - h - v.scroll < 300 then conn:load_history(ch.id) end
   if not s.loaded and not s.loading and conn.status == "online" then conn:load_history(ch.id) end
+
+  -- jump to a message (clicked reply preview)
+  if v.jump_to then
+    local found
+    for _, it in ipairs(items) do if it.kind == "msg" and it.m.id == v.jump_to then found = it; break end end
+    if found then
+      v.scroll = math.max(0, math.min(max_scroll, total - found.y - found.h / 2 - h / 2 + 12))
+      v.flash, v.flash_at, v.jump_to = found.m.id, P.now(), nil
+    elseif s.more then
+      if not s.loading then conn:load_history(ch.id) end
+    else
+      v.jump_to = nil
+      self.ctl:toast("That message isn't here any more.")
+    end
+  end
 
   local offset = y + h - 12 - total + v.scroll -- y where item 0 starts
   if total < h - 12 then offset = y + 8 end
@@ -639,17 +816,104 @@ function App:draw_messages(conn, entry, v, ch, x, y, w, h)
   end
 end
 
+function App:rich_colors()
+  local T = self.T
+  return { text = T.text, link = T.link, mention = T.mention, mention_bg = T.mention_bg, code = T.code, code_bg = T.code_bg,
+           quote = T.quote, quote_bar = T.quote_bar, muted = T.muted }
+end
+
+function App:composer(entry, ch_id)
+  return self.P.field("composer:" .. entry.address .. ":" .. ch_id, { multiline = true, max_chars = P_.LIMITS.message_chars })
+end
+
+-- Ask before opening a link from a message.
+function App:open_link(url)
+  self:confirm("Open this link?", url, "Open", function() self.P.open_url(url) end)
+end
+
+-- One line of text with emoji images, cut with … when too wide.
+function App:draw_inline(text, x, y, maxw, font, color)
+  local P = self.P
+  local fh = P.line_height(font)
+  local es = math.floor(fh * 1.15 + 0.5)
+  local ell = "…"
+  local ew = P.measure(font, ell)
+  local cx = x
+  for _, piece in ipairs(E.split(text)) do
+    if piece.emoji then
+      if cx + es + ew > x + maxw then P.text(ell, cx, y, font, color); return end
+      E.draw(P, piece.emoji, cx + 1, y + (fh - es) / 2, es)
+      cx = cx + es + 2
+    else
+      local t = piece.text
+      local tw = P.measure(font, t)
+      if cx + tw > x + maxw then
+        -- cut by characters
+        local out = ""
+        for ch in t:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+          if cx + P.measure(font, out .. ch) + ew > x + maxw then break end
+          out = out .. ch
+        end
+        P.text(out .. ell, cx, y, font, color)
+        return
+      end
+      P.text(t, cx, y, font, color)
+      cx = cx + tw
+    end
+  end
+end
+
+function App:start_reply(conn, entry, v, ch, m)
+  v.replying = m.id
+  v.editing = nil
+  self:composer(entry, ch.id):focus()
+end
+
 function App:draw_message(conn, entry, v, ch, it, idx, x, y, w, body_f, name_f, time_f)
   local P, T, ui = self.P, self.T, self.ui
   local m = it.m
   local id = "msg:" .. (m.id > 0 and m.id or (m.nonce or idx))
   local st = ui:hit(id, x - 10, y, w + 20, it.h, { cursor = false })
-  -- hovering this message's own toolbar counts as hovering the message
+  -- hovering this message's own toolbar or parts counts as hovering the message
   if not st.hovered and ui.hover_id and ui.hover_id:sub(1, #id + 1) == id .. ":" then st.hovered = true end
   local mine = m.a == self.ctl.key
-  if st.hovered or (v.editing == m.id) then P.rect(x - 10, y, w + 20, it.h, T.hover, 8) end
+  local ping = not it.pending and conn:pings_me(m)
+  if ping then
+    P.rect(x - 10, y, w + 20, it.h, T.ping_bg, 0)
+    P.rect(x - 10, y, 2, it.h, T.ping_bar)
+  end
+  if v.flash == m.id and P.now() - (v.flash_at or 0) < 1.6 then
+    P.rect(x - 10, y, w + 20, it.h, Theme.alpha(T.accent, 0.12 * (1 - (P.now() - v.flash_at) / 1.6)), 8)
+  end
+  if st.hovered or v.editing == m.id or v.replying == m.id then P.rect(x - 10, y, w + 20, it.h, T.hover, 8) end
   local alpha = it.pending and 0.55 or 1
   local top = y + (it.header and 14 or 3)
+
+  -- the message this one replies to
+  if m.reply then
+    local r = m.reply
+    local rf = self:font("regular", 13)
+    local rx0 = x + 70
+    P.line({ x + 34, top + 18, x + 34, top + 10, x + 38, top + 6, rx0 - 6, top + 6 }, T.faint, 1.5)
+    local label, rx = "", rx0
+    if r.gone or not r.a then
+      label = "Original message was deleted"
+      P.text(label, rx, top - 2, self:font("italic", 13), T.faint)
+    else
+      local nm = "@" .. conn:member_name(r.a)
+      local nf = self:font("semibold", 13)
+      P.text(nm, rx, top - 2, nf, Theme.alpha(Theme.pick(T.names, r.a), 0.9))
+      rx = rx + P.measure(nf, nm) + 8
+      local preview = Rich.preview(r.b or "", function(k) return conn:member_name(k) end)
+      self:draw_inline(preview, rx, top - 2, x + w - rx - 10, rf, T.muted)
+    end
+    if not r.gone and r.id then
+      local rs = ui:hit(id .. ":goto", rx0, top - 4, w - 70, 20, { tip = "Show the original message" })
+      if rs.clicked then v.jump_to = r.id end
+    end
+    top = top + it.reply_h
+  end
+
   if it.header then
     P.text(fmt_time(m.at), x, top + 3, time_f, T.faint)
     local nm = conn:member_name(m.a)
@@ -658,25 +922,35 @@ function App:draw_message(conn, entry, v, ch, it, idx, x, y, w, body_f, name_f, 
   elseif st.hovered then
     P.text(fmt_time(m.at), x, top + 3, self:font("regular", 11), T.faint)
   end
-  local col = Theme.alpha(T.text, alpha)
-  for i, line in ipairs(it.lines) do
-    P.text(line, x + 70, top + (i - 1) * it.lh + (it.lh - P.line_height(body_f)) / 2, body_f, col)
+
+  -- body
+  local L = it.rich
+  local ctx = self:rich_ctx(conn)
+  Rich.draw(L, x + 70, top, ctx, self:rich_colors(), alpha)
+  for hi, hit in ipairs(L.hits) do
+    if hit.link then
+      local hs = ui:hit(id .. ":link:" .. hi, x + 70 + hit.x, top + hit.y, hit.w, hit.h, { tip = hit.link, cursor = "hand" })
+      if hs.clicked then self:open_link(hit.link) end
+    elseif hit.mention then
+      ui:hit(id .. ":mention:" .. hi, x + 70 + hit.x, top + hit.y, hit.w, hit.h, { tip = conn:member_name(hit.mention), cursor = false })
+    end
   end
-  local last_line = it.lines[#it.lines] or ""
-  local after_x = x + 70 + P.measure(body_f, last_line) + 6
-  local after_y = top + (#it.lines - 1) * it.lh + (it.lh - P.line_height(time_f)) / 2
+  -- "(edited)" / sending state after the last line
+  local last
+  for _, op in ipairs(L.ops) do if op.atom and (not last or op.y > last.y or (op.y == last.y and op.x >= last.x)) then last = op end end
+  local after_x = x + 70 + (last and (last.x + last.atom.w + 6) or 0)
+  local after_y = top + (last and last.y or 0) + (ctx.lh - P.line_height(time_f)) / 2
+  if L.jumbo then after_x, after_y = x + 70, top + L.h - 14 end
   if m.edited then P.text("(edited)", after_x, after_y, time_f, T.faint) end
   if it.pending then
     if m.state == "failed" then
       P.text("Not sent" .. (m.error and (": " .. m.error) or ""), after_x, after_y, time_f, T.danger)
-      if st.hovered or true then
-        local bx = x + w - 130
-        if self:button(id .. ":retry", bx, y + 4, 60, 24, "Retry", "secondary", { radius = 6, font = self:font("medium", 12) }) then
-          conn:drop_pending(m.nonce); conn:send_message(ch.id, m.body)
-        end
-        if self:button(id .. ":drop", bx + 66, y + 4, 64, 24, "Discard", "secondary", { radius = 6, font = self:font("medium", 12) }) then
-          conn:drop_pending(m.nonce)
-        end
+      local bx = x + w - 130
+      if self:button(id .. ":retry", bx, y + 4, 60, 24, "Retry", "secondary", { radius = 6, font = self:font("medium", 12) }) then
+        conn:drop_pending(m.nonce); conn:send_message(ch.id, m.body, m.reply and m.reply.id)
+      end
+      if self:button(id .. ":drop", bx + 66, y + 4, 64, 24, "Discard", "secondary", { radius = 6, font = self:font("medium", 12) }) then
+        conn:drop_pending(m.nonce)
       end
     else
       P.text("Sending…", after_x, after_y, time_f, T.faint)
@@ -684,13 +958,56 @@ function App:draw_message(conn, entry, v, ch, it, idx, x, y, w, body_f, name_f, 
     return
   end
 
+  -- reactions
+  local can_react = conn:supports("react") and conn.status == "online"
+  if it.pills then
+    local py = top + L.h + 4
+    local f = self:font("semibold", 12)
+    for pi, pill in ipairs(it.pills) do
+      local px = x + 70 + pill.x
+      local mine_r = conn:reacted(m, pill.emoji)
+      local names = {}
+      for i, k in ipairs(pill.keys) do
+        if i > 6 then names[#names + 1] = ("%d more"):format(#pill.keys - 6); break end
+        names[#names + 1] = k == self.ctl.key and "You" or conn:member_name(k)
+      end
+      local tip = table.concat(names, ", ") .. " · :" .. (pill.idx and E.name(pill.idx) or "?") .. ":"
+      local ps = ui:hit(id .. ":rx:" .. pi, px, py + pill.y, pill.w, PILL_H, { tip = tip })
+      P.rect(px, py + pill.y, pill.w, PILL_H, mine_r and T.react_mine or T.react_bg, PILL_H / 2)
+      P.rect_line(px, py + pill.y, pill.w, PILL_H, mine_r and T.react_line or (ps.hovered and T.faint or T.line), PILL_H / 2, 1)
+      if pill.idx then E.draw(P, pill.idx, px + 8, py + pill.y + 5, 18)
+      else P.text(pill.emoji, px + 8, py + pill.y + 6, f, T.text) end
+      P.text(pill.count, px + 32, py + pill.y + PILL_H / 2 - P.line_height(f) / 2, f, mine_r and T.mention or T.soft)
+      if ps.clicked and can_react then conn:react(m, pill.emoji) end
+    end
+    if st.hovered and can_react then
+      local ax, ay = x + 70 + it.pills.add_x, py + it.pills.add_y
+      local as = ui:hit(id .. ":rx:add", ax, ay, 40, PILL_H, { tip = "Add a reaction" })
+      P.rect_line(ax, ay, 40, PILL_H, as.hovered and T.faint or T.line, PILL_H / 2, 1)
+      Icons.draw(P, "react", ax + 11, ay + 5, 18, as.hovered and T.text or T.faint)
+      if as.clicked then
+        Picker.open(self, ax + 20, ay, function(e) conn:react(m, e, true) end)
+      end
+    end
+  end
+
+  -- hover toolbar
   local can_delete = mine or conn:is_owner()
-  local actions = { { "copy", "Copy text", function() P.set_clipboard(m.body); self.ctl:toast("Copied") end } }
+  local actions = {}
+  if can_react then
+    actions[#actions + 1] = { "react", "Add a reaction", function(bx, by)
+      Picker.open(self, bx, by, function(e) conn:react(m, e, true) end)
+    end }
+    actions[#actions + 1] = { "reply", "Reply", function() self:start_reply(conn, entry, v, ch, m) end }
+  end
+  actions[#actions + 1] = { "copy", "Copy text", function()
+    P.set_clipboard(Rich.plain(m.body, function(k) return conn:member_name(k) end)); self.ctl:toast("Copied")
+  end }
   if mine then
     actions[#actions + 1] = { "edit", "Edit", function()
-      v.editing = m.id
-      local f = P.field("composer:" .. entry.address .. ":" .. ch.id, { multiline = true })
-      f:set(m.body); f:focus()
+      v.editing = m.id; v.replying = nil
+      local f = self:composer(entry, ch.id)
+      f:set(Compose.to_field(conn, m.body)); f:focus()
     end }
   end
   if can_delete then
@@ -705,12 +1022,15 @@ function App:draw_message(conn, entry, v, ch, it, idx, x, y, w, body_f, name_f, 
     P.rect(bx, by, bw, 32, T.card, 8)
     P.rect_line(bx, by, bw, 32, T.line, 8, 1)
     for i, a in ipairs(actions) do
-      if self:icon_button(id .. ":" .. a[1], a[1], bx + 3 + (i - 1) * 30, by + 2, 28, a[2]) then a[3]() end
+      local ix = bx + 3 + (i - 1) * 30
+      if self:icon_button(id .. ":" .. a[1], a[1], ix, by + 2, 28, a[2]) then a[3](ix + 14, by) end
     end
   end
   if st.rclicked then
     local items = {}
-    for _, a in ipairs(actions) do items[#items + 1] = { label = a[2], fn = a[3], danger = a[1] == "trash" } end
+    for _, a in ipairs(actions) do
+      items[#items + 1] = { label = a[2], fn = function() a[3](ui.rclick_x, ui.rclick_y) end, danger = a[1] == "trash" }
+    end
     self:open_menu(ui.rclick_x, ui.rclick_y, items)
   end
 end
@@ -905,14 +1225,33 @@ function App:draw_settings(w, h)
   local scrim = ui:hit("settings:scrim", 0, 0, w, h, { block = true, cursor = false })
   P.rect(0, 0, w, h, T.scrim)
   if scrim.clicked then self.settings_open = false; return end
-  local cw, ch = math.min(560, w - 32), math.min(h - 32, 600)
-  local cx, cy = (w - cw) / 2, math.max(20, (h - ch) / 2)
-  ui:hit("settings:card", cx, cy, cw, ch, { block = true, cursor = false })
-  self:card(cx, cy, cw, ch)
-  P.text("Settings", cx + 28, cy + 24, self:font("head_bold", 22), T.text)
-  if self:icon_button("settings:close", "close", cx + cw - 52, cy + 20, 32, "Close") then self.settings_open = false end
+  local card_w, ch = math.min(780, w - 32), math.min(h - 32, 560)
+  local card_x, cy = (w - card_w) / 2, math.max(16, (h - ch) / 2)
+  ui:hit("settings:card", card_x, cy, card_w, ch, { block = true, cursor = false })
+  self:card(card_x, cy, card_w, ch)
+  P.text("Settings", card_x + 28, cy + 24, self:font("head_bold", 22), T.text)
+  if self:icon_button("settings:close", "close", card_x + card_w - 52, cy + 20, 32, "Close") then self.settings_open = false end
+
+  -- sections on the left, the chosen one on the right
+  local side_w = 190
+  local tabs = { { "general", "General" }, { "notify", "Notifications" }, { "account", "Your account" } }
+  self.settings_tab = self.settings_tab or "general"
+  for i, t in ipairs(tabs) do
+    local by = cy + 76 + (i - 1) * 42
+    local sel = self.settings_tab == t[1]
+    local st = ui:hit("settings:tab:" .. t[1], card_x + 16, by, side_w - 24, 36)
+    if sel then P.rect(card_x + 16, by, side_w - 24, 36, T.sunken, 8) elseif st.hovered then P.rect(card_x + 16, by, side_w - 24, 36, T.hover, 8) end
+    local f = self:font(sel and "semibold" or "medium", 14)
+    P.text(t[2], card_x + 30, by + 18 - P.line_height(f) / 2, f, sel and T.text or T.soft)
+    if st.clicked then self.settings_tab = t[1] end
+  end
+  P.text("Zuno " .. version.APP, card_x + 30, cy + ch - 34, self:font("regular", 12), T.faint)
+  P.rect(card_x + side_w, cy + 70, 1, ch - 90, T.line)
+  local cx, cw = card_x + side_w - 6, card_w - side_w + 6 -- content: x from cx + 28, width cw - 56
+  local tab = self.settings_tab
 
   local y = cy + 76
+  if tab == "general" then
   P.text("Display name", cx + 28, y, self:font("semibold", 13), T.text)
   local nf = self:input("settings:name", cx + 28, y + 22, cw - 56 - 96, "Your name")
   if not self.settings_init then self.settings_init = true; nf:set(ctl.settings.name or "") end
@@ -957,8 +1296,38 @@ function App:draw_settings(w, h)
     P.text(label, bx + (sw - P.measure(f, label)) / 2, y + 42 - P.line_height(f) / 2, f, sel and T.text or T.soft)
     if st.clicked then ctl:set_streamer(o[1]) end
   end
+  end -- general
 
-  y = y + 78
+  if tab == "notify" then
+    P.text("Notify me about", cx + 28, y, self:font("semibold", 13), T.text)
+    local nopts = { { "all", "All messages" }, { "mentions", "Mentions & replies" }, { "off", "Nothing" } }
+    local nw = (cw - 56) / 3
+    P.rect(cx + 28, y + 22, cw - 56, 40, T.sunken, 10)
+    for i, o in ipairs(nopts) do
+      local bx = cx + 28 + (i - 1) * nw
+      local sel = ctl.settings.notify == o[1]
+      local st = ui:hit("notify:" .. o[1], bx, y + 22, nw, 40)
+      if sel then P.rect(bx + 3, y + 25, nw - 6, 34, T.card, 8) end
+      local f = self:font(sel and "semibold" or "medium", 14)
+      P.text(o[2], bx + (nw - P.measure(f, o[2])) / 2, y + 42 - P.line_height(f) / 2, f, sel and T.text or T.soft)
+      if st.clicked then ctl:set_notify(o[1]) end
+    end
+    local ny = AccountUI.paragraph(self, "While Zuno is open, you get a notification when a message arrives that you aren't looking at. "
+      .. "Zuno can't notify you while it's closed yet.", cx + 28, y + 76, cw - 56, T.muted, 13)
+    y = ny + 18
+    local on = ctl.settings.sound
+    local st = ui:hit("settings:sound", cx + 28, y, 260, 26)
+    P.rect(cx + 28, y + 2, 22, 22, on and T.accent or T.card, 6)
+    if not on then P.rect_line(cx + 28, y + 2, 22, 22, st.hovered and T.text or T.input, 6, 1.5) end
+    if on then Icons.draw(P, "check", cx + 30, y + 4, 18, T.on_accent, 2.2) end
+    P.text("Play a sound", cx + 60, y + 13 - P.line_height(self:font("medium", 14)) / 2, self:font("medium", 14), T.text)
+    if st.clicked then ctl:set_sound(not on) end
+    if self:button("settings:testnotify", cx + 28, y + 46, 170, 38, "Send a test", "secondary") then
+      ctl:test_notification()
+    end
+  end
+
+  if tab == "account" then
   P.text("Your account", cx + 28, y, self:font("semibold", 13), T.text)
   local lines = self:wrap(self:font("regular", 13), "Your account is a key on this device: no password, no central account. Back it up so you can restore it, or link your other devices.", cw - 56)
   for i, l in ipairs(lines) do P.text(l, cx + 28, y + 22 + (i - 1) * 19, self:font("regular", 13), T.muted) end
@@ -999,7 +1368,7 @@ function App:draw_settings(w, h)
     P.text(("Moving to your new key: %d server%s still to go."):format(ctl:rekey_pending_count(), ctl:rekey_pending_count() == 1 and "" or "s"),
       cx + 28, by + 82, self:font("medium", 12), T.idle)
   end
-  P.text("Zuno " .. version.APP, cx + 28, cy + ch - 30, self:font("regular", 12), T.faint)
+  end -- account
 end
 
 ----------------------------------------------------------------- dialogs, menus, toasts

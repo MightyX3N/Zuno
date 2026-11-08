@@ -146,6 +146,7 @@ end
 ------------------------------------------------------------------ LÖVE callbacks
 function love.load()
   love.keyboard.setKeyRepeat(true)
+  P.set_app_icon()
   love.keyboard.setTextInput(true)
   dns_req, dns_res = love.thread.getChannel("zuno_dns_req"), love.thread.getChannel("zuno_dns_res")
   love.thread.newThread("zuno_native/dns_thread.lua"):start()
@@ -160,7 +161,8 @@ function love.load()
     write = function(name, data) assert(love.filesystem.write(name, data)) end,
   }
   local transport = TCP.factory(resolve)
-  ctl = Controller.new({ crypto = crypto, transport = transport, now = love.timer.getTime, storage = storage, host = host })
+  ctl = Controller.new({ crypto = crypto, transport = transport, now = love.timer.getTime, storage = storage, host = host,
+    notify = P.notify, sound = P.play_sound, attention = P.attention })
   ui = UI.new(P)
   app = App.new(ui, P, ctl, pack)
   if #ctl.servers == 0 then app.page = "add" end
@@ -235,6 +237,7 @@ function love.quit()
   end
   if dns_req then dns_req:push("__quit") end
   if ctl then ctl:save() end
+  pcall(function() require("zuno_native.notify").cleanup() end)
 end
 
 -- Draw at full speed only while something is happening; otherwise a few frames a second.

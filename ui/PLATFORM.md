@@ -22,6 +22,10 @@ Colors are `{r, g, b, a}` with values from 0 to 1. Coordinates are in UI units
 | `P.line_height(font)` | Height of one line |
 | `P.wrap(font, str, width)` | List of lines that fit in `width` |
 | `P.clip(x, y, w, h)` / `P.unclip()` | Nested clipping |
+| `P.image(path)` | Image handle (cached), or nil if it can't be loaded |
+| `P.draw_image(img, x, y, w, h, sx, sy, sw, sh)` | Draw a part of an image (`sx..sh` in image pixels) into a box; used for the emoji sheet |
+
+Font faces also include `italic`, `bold_italic` and `mono` (message formatting).
 
 ## Input (backend → UI)
 
@@ -45,6 +49,8 @@ Real editable text fields are owned by the backend (in the browser they are `<in
 | `f:get()` / `f:set(text)` | Read / replace the text |
 | `f:focus()` / `f:blur()` / `f:focused()` | Keyboard focus |
 | `f:set_secret(on)` | Show dots instead of the text (streamer mode, passwords) |
+| `f:cursor_pos()` / `f:set_cursor(pos)` | Cursor as a byte offset (0 = before the first character) |
+| `f:replace(a, b, text)` / `f:insert(text)` | Replace bytes `a+1..b` / insert at the cursor (mention and emoji suggestions) |
 | `f.on_submit`, `f.on_key`, `f.on_change` | Callbacks set by the UI |
 
 ## Everything else
@@ -63,5 +69,9 @@ Real editable text fields are owned by the backend (in the browser they are `<in
 | `P.save_fallback(name, data)` | Save into Zuno's own folder when there's no dialog. Returns the path |
 | `P.open_folder(path)` | Show a folder in the file manager |
 | `P.recording_detected()` | True while OBS / Streamlabs runs (streamer mode "Auto"); optional |
+| `P.window_focused()` | Is Zuno the active window? (decides system notification vs. in-app toast) |
+| `P.notify(title, body)` | System notification; optional |
+| `P.attention()` | Flash the taskbar entry / bounce the dock icon; optional |
+| `P.play_sound(name)` | Short notification sound; optional |
 
 Dropped files reach the UI through `app:file_dropped(name, data)`.

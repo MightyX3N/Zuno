@@ -66,6 +66,7 @@ function Conn:_reset_state()
   self.latency = nil
   self.msgs = self.msgs or {} -- ch -> store (kept across reconnects for resume)
   self.unread = self.unread or {}
+  self.mentions = self.mentions or {} -- ch -> count of unread messages that mention me / reply to me
   self.last_read = self.last_read or {}
   self.pending = self.pending or {}
 end
@@ -162,6 +163,7 @@ function Conn:update()
   if not self.session then
     self.session = Session.client(self.env.crypto, {
       identity_seed = self.seed or self.env.identity_seed, name = self.env.name(), pinned_key = self.entry.key,
+      max = self.env.max_version, -- tests pretend to be an older client
     })
     self.session:start()
     self.status = "handshake"
@@ -272,13 +274,22 @@ local function apply_msg(self, m)
     return "deleted"
   end
   if cur then
-    cur.body, cur.edited, cur.rev = m.body, m.edited, m.rev
+    cur.body, cur.edited, cur.rev, cur.reply, cur.rx = m.body, m.edited, m.rev, m.reply, m.rx
     return "edited"
   end
-  local entry = { id = m.id, ch = m.ch, a = m.a, at = m.at, body = m.body, edited = m.edited, rev = m.rev }
+  local entry = { id = m.id, ch = m.ch, a = m.a, at = m.at, body = m.body, edited = m.edited, rev = m.rev,
+                  reply = m.reply, rx = m.rx }
   s.by_id[m.id] = entry
   insert_sorted(s.list, entry)
   return "new", entry
+end
+
+-- Does this message ping me? (an @mention of my key, or a reply to one of my messages)
+function Conn:pings_me(m)
+  local me = self.me and self.me.user
+  if not me or m.a == me then return false end
+  if m.body and m.body:find("<@" .. me .. ">", 1, true) then return true end
+  return type(m.reply) == "table" and m.reply.a == me
 end
 
 function Conn:_on_packet(p)
@@ -304,7 +315,7 @@ function Conn:_on_packet(p)
     end
     -- resend messages that never got confirmed
     for nonce, pm in pairs(self.pending) do
-      if pm.state == "sending" then self:send({ t = "send", ch = pm.ch, body = pm.body, nonce = nonce }) end
+      if pm.state == "sending" then self:send({ t = "send", ch = pm.ch, body = pm.body, nonce = nonce, reply = pm.reply_to }) end
     end
     self:_emit("state")
   elseif t == "messages" then
@@ -318,7 +329,10 @@ function Conn:_on_packet(p)
     for _, m in ipairs(p.list or {}) do
       m.ch = p.ch
       local kind = apply_msg(self, m)
-      if kind == "new" and p.since and m.a ~= (self.me and self.me.user) then new_count = new_count + 1 end
+      if kind == "new" and p.since and m.a ~= (self.me and self.me.user) then
+        new_count = new_count + 1
+        if self:pings_me(m) and self.view_ch ~= p.ch then self.mentions[p.ch] = (self.mentions[p.ch] or 0) + 1 end
+      end
     end
     if p.since == nil then -- a history page
       s.loading = false
@@ -337,6 +351,9 @@ function Conn:_on_packet(p)
       if self.typing[p.ch] then self.typing[p.ch][p.a] = nil end
       if not mine and self.view_ch ~= p.ch then self.unread[p.ch] = (self.unread[p.ch] or 0) + 1 end
       if mine then self.last_read[p.ch] = p.id end
+      local ping = self:pings_me(p)
+      if ping and self.view_ch ~= p.ch then self.mentions[p.ch] = (self.mentions[p.ch] or 0) + 1 end
+      if not mine then self:_emit("incoming", p, ping) end
     end
     self:_emit("msg", p.ch, kind)
   elseif t == "typing" then
@@ -383,7 +400,15 @@ function Conn:_on_packet(p)
     -- someone's identity (maybe ours) moved to a new key: update everything we have locally
     local m = self.members[p.old]
     if m then self.members[p.old] = nil; m.user = p.new; self.members[p.new] = m end
-    for _, s in pairs(self.msgs) do for _, msg in ipairs(s.list) do if msg.a == p.old then msg.a = p.new end end end
+    local old_tag, new_tag = "<@" .. p.old .. ">", "<@" .. p.new .. ">"
+    for _, s in pairs(self.msgs) do
+      for _, msg in ipairs(s.list) do
+        if msg.a == p.old then msg.a = p.new end
+        if msg.body:find(old_tag, 1, true) then msg.body = msg.body:gsub(old_tag:gsub("%p", "%%%0"), new_tag) end
+        if type(msg.reply) == "table" and msg.reply.a == p.old then msg.reply.a = p.new end
+        for _, r in ipairs(msg.rx or {}) do for i, k in ipairs(r[2]) do if k == p.old then r[2][i] = p.new end end end
+      end
+    end
     for _, pm in pairs(self.pending) do if pm.a == p.old then pm.a = p.new end end
     if self.me and self.me.user == p.old then self.me.user = p.new end
     self:_emit("members")
@@ -427,13 +452,21 @@ function Conn:view(ch)
   self.view_ch = ch
   if ch then
     self.unread[ch] = nil
+    self.mentions[ch] = nil
     local s = store_for(self, ch)
     if not s.loaded then self:load_history(ch) end
   end
 end
 
 local nonce_counter = 0
-function Conn:send_message(ch, body)
+-- Protocol 2 added replies and reactions.
+function Conn:supports(feature)
+  local v = self.session_version or 1
+  if feature == "reply" or feature == "react" then return v >= 2 end
+  return true
+end
+
+function Conn:send_message(ch, body, reply_to)
   body = P.clean_text(body)
   if body == "" then return false end
   if compat.utf8_len(body) > P.LIMITS.message_chars then
@@ -445,8 +478,15 @@ function Conn:send_message(ch, body)
   self.q = (self.q or 0) + 1
   self.pending_q = self.pending_q or {}
   self.pending_q[self.q] = nonce
-  self.pending[nonce] = { ch = ch, body = body, at = self.env.now(), state = "sending", a = self.me and self.me.user }
-  self:send({ t = "send", ch = ch, body = body, nonce = nonce, q = self.q })
+  if not self:supports("reply") then reply_to = nil end
+  local reply
+  if reply_to then
+    local target = self.msgs[ch] and self.msgs[ch].by_id[reply_to]
+    reply = { id = reply_to, a = target and target.a, b = target and target.body }
+  end
+  self.pending[nonce] = { ch = ch, body = body, at = self.env.now(), state = "sending", a = self.me and self.me.user,
+                          reply_to = reply_to, reply = reply }
+  self:send({ t = "send", ch = ch, body = body, nonce = nonce, q = self.q, reply = reply_to })
   self:_emit("msg", ch, "pending")
   return true
 end
@@ -467,6 +507,23 @@ function Conn:edit_message(id, body)
 end
 
 function Conn:delete_message(id) return self:send({ t = "delete", id = id }) end
+
+-- Has the user reacted with this emoji on this message?
+function Conn:reacted(m, emoji)
+  local me = self.me and self.me.user
+  for _, r in ipairs(m.rx or {}) do
+    if r[1] == emoji then
+      for _, k in ipairs(r[2]) do if k == me then return true end end
+      return false
+    end
+  end
+  return false
+end
+
+function Conn:react(m, emoji, on)
+  if on == nil then on = not self:reacted(m, emoji) end
+  return self:send({ t = "react", id = m.id, e = emoji, on = on })
+end
 
 function Conn:typed(ch)
   local now = self.env.now()

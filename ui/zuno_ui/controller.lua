@@ -44,7 +44,13 @@ function Controller:_load()
     host_name = type(data.host_name) == "string" and data.host_name or nil,
     hosting = data.hosting == true, -- restart the hosted server on launch
     streamer = (data.streamer == "on" or data.streamer == "off") and data.streamer or "auto",
+    notify = (data.notify == "all" or data.notify == "off") and data.notify or "mentions",
+    sound = data.sound ~= false,
+    recent_emoji = {},
   }
+  for _, e in ipairs(type(data.recent_emoji) == "table" and data.recent_emoji or {}) do
+    if type(e) == "string" and #e <= 32 and #self.settings.recent_emoji < 24 then table.insert(self.settings.recent_emoji, e) end
+  end
   self.servers = {}
   for _, e in ipairs(type(data.servers) == "table" and data.servers or {}) do
     if type(e) == "table" and type(e.address) == "string" and model.parse_address(e.address) then
@@ -65,7 +71,9 @@ function Controller:save()
   end
   self.env.storage.write(DATA_FILE, mp.encode({
     name = self.settings.name, theme = self.settings.theme, host_port = self.settings.host_port,
-    host_name = self.settings.host_name, hosting = self.settings.hosting or nil, streamer = self.settings.streamer, servers = list, active = self.active,
+    host_name = self.settings.host_name, hosting = self.settings.hosting or nil, streamer = self.settings.streamer,
+    notify = self.settings.notify, sound = self.settings.sound, recent_emoji = self.settings.recent_emoji,
+    servers = list, active = self.active,
   }))
 end
 
@@ -125,6 +133,7 @@ function Controller:_open(entry)
     elseif ev == "entry" then self:save()
     elseif ev == "error" then self:toast(a, "error", entry)
     elseif ev == "notice" then self:toast(a, "info", entry)
+    elseif ev == "incoming" then self:_incoming(entry, conn, a, b)
     end
   end)
   self.conns[entry] = conn
@@ -184,6 +193,47 @@ end
 
 function Controller:set_theme(t) self.settings.theme = t; self:save() end
 function Controller:set_streamer(s) self.settings.streamer = s; self:save() end
+function Controller:set_notify(n) self.settings.notify = n; self:save() end
+function Controller:set_sound(on) self.settings.sound = on and true or false; self:save() end
+
+------------------------------------------------------------------ notifications
+-- The UI tells us what the user is looking at: self.viewing = { entry, ch, focused }.
+-- env.notify(title, body), env.sound(), env.attention() come from the platform (optional).
+Controller.NOTIFY_GAP = 2 -- seconds between two notifications (bursts make one)
+
+function Controller:test_notification()
+  if self.env.notify then self.env.notify("Zuno", "Notifications work. This is what a new message looks like.") end
+  if self.settings.sound and self.env.sound then self.env.sound() end
+  if not self.env.notify then self:toast("This device can't show notifications.", "error") end
+end
+
+function Controller:_incoming(entry, conn, m, ping)
+  local mode = self.settings.notify
+  if mode == "off" or (mode == "mentions" and not ping) then return end
+  local v = self.viewing or {}
+  if v.focused and v.entry == entry and v.ch == m.ch then return end -- already on screen
+  local now = self.env.now()
+  if self.last_notify and now - self.last_notify < Controller.NOTIFY_GAP then return end
+  self.last_notify = now
+  local ch = conn.channel_by_id[m.ch]
+  local who = conn:member_name(m.a)
+  local where = (ch and ("#" .. ch.name) or "") .. (entry.name and (" · " .. entry.name) or "")
+  local body = require("zuno_ui.rich").preview(m.body or "", function(k) return conn:member_name(k) end)
+  if self.streamer_on then body = "New message" end -- streamer mode: no message text on screen
+  local title = ping and (who .. " mentioned you in " .. where) or (who .. " in " .. where)
+  if type(m.reply) == "table" and m.reply.a == (conn.me and conn.me.user) and not (m.body or ""):find("<@") then
+    title = who .. " replied to you in " .. where
+  end
+  self.notified = (self.notified or 0) + 1
+  self.last_notification = { title = title, body = body, entry = entry, ch = m.ch }
+  if not v.focused then
+    if self.env.notify then self.env.notify(title, body) end
+    if self.env.attention then self.env.attention() end
+  else
+    self:toast(title .. ": " .. body, "info", entry)
+  end
+  if self.settings.sound and self.env.sound then self.env.sound() end
+end
 
 function Controller:remember_channel(entry, ch)
   if entry.last_ch ~= ch then entry.last_ch = ch; self:save() end
