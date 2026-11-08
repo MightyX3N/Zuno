@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zuno Tabs Variants</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<style>
+/* ---------- design canvas ---------- */
+html{background:#f5f4ef;color:#1f1e1d;font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
+body{margin:0;padding:48px;display:flex;flex-direction:column;gap:56px}
+.intro{max-width:760px}
+.intro h1{margin:0 0 8px;font:700 26px "Space Grotesk",sans-serif}
+.intro p{margin:0;color:#5d616b;line-height:1.55}
+.row h2{margin:0 0 4px;font-size:15px;font-weight:600}
+.row > p{margin:0 0 16px;color:#6b6a68;font-size:13px;max-width:820px;line-height:1.5}
+.boards{display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start}
+.board .cap{margin:0 0 10px;font-size:12px;font-weight:500;color:#6b6a68}
+.frame{position:relative;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.14),0 8px 24px rgba(0,0,0,.06)}
+.frame > .dev{position:absolute;left:0;top:0;transform-origin:0 0}
+.frame.phone{border-radius:28px}
+.frame.tablet{border-radius:18px}
+.frame.tv{border-radius:6px;box-shadow:0 0 0 10px #111,0 10px 30px rgba(0,0,0,.25)}
+
+/* ---------- Zuno tokens: one pack, two color schemes ---------- */
+.z{
+  --bar:#e6e4dd; --bg:#fbfaf7; --app:#f3f2ee; --line:#e3e1da; --card:#ffffff; --sunken:#f0eee8;
+  --text:#16181d; --soft:#4a4e57; --muted:#5d616b; --faint:#6b6f78;
+  --sel-bg:#16181d; --sel-fg:#ffffff; --accent:#c2410c; --on-accent:#ffffff;
+  --ok:#3f6d2a; --voice:#4f7a3a; --input:#dcd9d0; --media:#e6e4dd; --scrim:rgba(22,24,29,.35);
+  --online:#16a34a; --idle:#d97706; --focus:#c2410c;
+  --n-jonas:#1d4ed8; --n-ellie:#9d174d; --n-patrick:#c2410c; --n-nova:#0f766e; --n-kiwi:#6d28d9;
+  font-family:Inter,sans-serif; font-size:14px; color:var(--text); background:var(--app);
+  box-sizing:border-box; display:flex; flex-direction:column; overflow:hidden;
+}
+.z[data-scheme="dark"]{
+  --bar:#0e0f12; --bg:#17191e; --app:#121317; --line:#2a2d35; --card:#1f2228; --sunken:#23262d;
+  --text:#ecebe6; --soft:#c4c6cc; --muted:#9a9ea8; --faint:#868a94;
+  --sel-bg:#ecebe6; --sel-fg:#16181d; --accent:#f06a2a; --on-accent:#16181d;
+  --ok:#7fbf5c; --voice:#8fc46f; --input:#2f333b; --media:#262a31; --scrim:rgba(0,0,0,.55);
+  --online:#22c55e; --idle:#f59e0b; --focus:#f06a2a;
+  --n-jonas:#7aa7ff; --n-ellie:#f27aac; --n-patrick:#fb8a4c; --n-nova:#3fd1bd; --n-kiwi:#b49cff;
+}
+.z *{box-sizing:border-box}
+.z button{font:inherit;color:inherit;border:none;background:none;padding:0;cursor:pointer;text-align:left}
+.z svg{display:block}
+.lbl{font:700 11px "Space Grotesk",sans-serif;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
+.sicon{width:22px;height:22px;border-radius:6px;color:#fff;font:700 12px "Space Grotesk",sans-serif;display:flex;align-items:center;justify-content:center;flex:none}
+.av{border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:600;color:#16181d;flex:none}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.badge{background:var(--accent);color:var(--on-accent);border-radius:10px;padding:0 7px;font-size:12px;font-weight:600;line-height:18px}
+
+/* tabs strip */
+.tabs{display:flex;align-items:flex-end;gap:4px;padding:10px 16px 0;background:var(--bar);flex:none}
+.tab{display:flex;align-items:center;gap:10px;padding:10px 16px;border-radius:10px 10px 0 0;font-weight:500}
+.tab.on{background:var(--bg)}
+.tab .cnt{color:var(--faint);font-size:12px}
+.tab.add{padding:10px 12px;color:var(--soft)}
+.body{flex:1;display:flex;min-height:0;background:var(--bg)}
+
+/* channels */
+.chans{display:flex;flex-direction:column;gap:4px;border-right:1px solid var(--line)}
+.ch{padding:8px 10px;border-radius:8px;font-weight:500;display:flex;justify-content:space-between;align-items:center}
+.ch.on{background:var(--sel-bg);color:var(--sel-fg)}
+.ch.dim{font-weight:400;color:var(--soft)}
+.vc{padding:10px;border-radius:10px;background:var(--card);border:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
+.vc .ppl{display:flex;gap:6px}
+.me{margin-top:auto;display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;background:var(--sunken)}
+.me small{display:block;font-size:12px;color:var(--voice)}
+
+/* chat */
+.chat{flex:1;display:flex;flex-direction:column;min-width:0}
+.chead{border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px}
+.chead h1{margin:0;font:700 22px "Space Grotesk",sans-serif}
+.chead .topic{color:var(--muted)}
+.msgs{flex:1;display:flex;flex-direction:column;gap:18px;overflow:hidden}
+.day{display:flex;align-items:center;gap:12px;color:var(--faint);font-size:12px}
+.day:before,.day:after{content:"";flex:1;height:1px;background:var(--line)}
+.m{display:grid;grid-template-columns:56px minmax(0,1fr);gap:4px 14px}
+.m .t{font-size:12px;color:var(--faint);padding-top:3px}
+.m .w{font-weight:600}
+.m .x{line-height:1.5}
+.m .stack{display:flex;flex-direction:column;gap:3px}
+.img{width:320px;max-width:100%;height:150px;border-radius:12px;background:var(--media);display:flex;align-items:center;justify-content:center;color:var(--muted);margin-top:5px}
+.comp{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:14px;background:var(--card);border:1px solid var(--input);box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.comp .ph{flex:1;color:var(--faint)}
+.send{border-radius:9px;padding:8px 16px;background:var(--accent);color:var(--on-accent);font:600 13px Inter,sans-serif}
+.typing{font-size:12px;color:var(--faint)}
+
+/* info panel */
+.info{border-left:1px solid var(--line);display:flex;flex-direction:column;gap:20px}
+.info .addr{font:500 13px "Space Grotesk",sans-serif;padding:8px 10px;background:var(--sunken);border-radius:8px}
+.kv{display:flex;justify-content:space-between;color:var(--soft)}
+.mem{display:flex;align-items:center;gap:10px}
+.mem .r{font-size:12px;color:var(--faint);margin-left:auto}
+
+/* phone */
+.sb{height:44px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 26px;font:600 15px Inter,sans-serif;background:var(--bar)}
+.strip{display:flex;gap:6px;padding:4px 12px 0;background:var(--bar);align-items:flex-end;flex:none;overflow:hidden}
+.chip{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:10px 10px 0 0;font-weight:500;white-space:nowrap}
+.chip.on{background:var(--bg)}
+.chip .cnt{color:var(--faint);font-size:12px}
+.pbar{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--bg);flex:none}
+.ibtn{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--soft);flex:none}
+.ibtn.solid{background:var(--sunken)}
+.pbar h1{margin:0;font:700 19px "Space Grotesk",sans-serif;flex:1;min-width:0}
+.pbar h1 small{display:block;font:400 12px Inter,sans-serif;color:var(--muted)}
+.pm{display:flex;flex-direction:column;gap:3px}
+.pm .h{display:flex;align-items:baseline;gap:8px}
+.pm .t{font-size:11px;color:var(--faint)}
+.home{height:34px;flex:none;display:flex;align-items:center;justify-content:center;background:var(--bg)}
+.home:after{content:"";width:134px;height:5px;border-radius:3px;background:var(--text);opacity:.85}
+.scrim{position:absolute;inset:0;background:var(--scrim)}
+.drawer{position:absolute;top:0;bottom:0;left:0;width:304px;background:var(--bg);display:flex;flex-direction:column;box-shadow:8px 0 30px rgba(0,0,0,.18)}
+.sheet{position:absolute;left:0;right:0;top:0;background:var(--bg);border-radius:0 0 22px 22px;box-shadow:0 12px 30px rgba(0,0,0,.25);display:flex;flex-direction:column}
+.srow{display:flex;align-items:center;gap:12px;padding:12px;border-radius:12px}
+.srow.on{background:var(--sunken)}
+.srow .sicon{width:36px;height:36px;border-radius:10px;font-size:15px}
+.srow .nm{flex:1;font-weight:600}
+.srow .nm small{display:block;font-weight:400;font-size:12px;color:var(--muted)}
+.handle{width:40px;height:5px;border-radius:3px;background:var(--line);margin:4px auto 10px}
+
+/* TV */
+.tvfocus{box-shadow:0 0 0 4px var(--focus) !important}
+.hint{display:flex;gap:36px;align-items:center;color:var(--muted);font-size:20px}
+.key{display:inline-flex;align-items:center;justify-content:center;min-width:38px;height:34px;padding:0 10px;border-radius:8px;background:var(--sunken);color:var(--text);font:600 17px Inter,sans-serif;margin-right:10px;border:1px solid var(--line)}
+.qr{background:#fff;padding:22px;border-radius:20px}
+.code{display:flex;gap:12px}
+.code span{width:74px;height:96px;border-radius:14px;background:var(--card);border:2px solid var(--line);display:flex;align-items:center;justify-content:center;font:700 52px "Space Grotesk",sans-serif}
+.code i{width:22px}
+.pcode{display:flex;gap:7px;justify-content:center}
+.pcode span{width:44px;height:56px;border-radius:10px;border:1.5px solid var(--input);background:var(--card);display:flex;align-items:center;justify-content:center;font:700 26px "Space Grotesk",sans-serif}
+.pcode span.cur{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}
+.pcode i{width:6px}
+.kb{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:8px 6px 0;background:var(--sunken)}
+.kb span{height:46px;border-radius:8px;background:var(--card);display:flex;align-items:center;justify-content:center;font:500 22px Inter,sans-serif}
+.primary{border-radius:12px;padding:14px;background:var(--accent);color:var(--on-accent);font-weight:600;text-align:center}
+.primary.off{opacity:.45}
+</style>
+</head>
+<body>
+
+<div class="intro">
+  <h1>Tabs: dark mode and other screen sizes</h1>
+  <p>The Tabs pack is the default layout. One pack defines a light and a dark color scheme and a variant per form factor. Everything here uses the same tokens; only the color set and the layout change. The desktop light version is the original design, kept here for comparison.</p>
+</div>
+
+<section class="row">
+  <h2>Desktop</h2>
+  <p>Dark mode is a second token set, not a separate design. The selected channel inverts (light pill on dark), and name colors and the accent are lifted so they stay readable on the dark background.</p>
+  <div class="boards" id="desk"></div>
+</section>
+
+<section class="row">
+  <h2>Tablet</h2>
+  <p>Same structure as desktop with larger touch targets. The member/info panel moves behind a button in the header and slides in from the right, giving chat the space.</p>
+  <div class="boards" id="tab"></div>
+</section>
+
+<section class="row">
+  <h2>Phone</h2>
+  <p>Server tabs become a strip at the top that scrolls sideways; the chevron at its end pulls down the full server list. Channels slide in from the left (menu button or swipe), members from the right. Chat is full screen.</p>
+  <div class="boards" id="phone"></div>
+</section>
+
+<section class="row">
+  <h2>TV</h2>
+  <p>10-foot layout for Android TV: large text, everything reachable with the D-pad, focus shown as an accent ring. Made for reading chat, sitting in voice and, later, watching streams. Typing opens the system keyboard or voice input.</p>
+  <div class="boards" id="tv"></div>
+</section>
+
+<section class="row">
+  <h2>Signing in on a TV</h2>
+  <p>The TV shows the QR and the phone scans it. They connect over the local network, the TV shows a code that is typed on the phone, then the phone sends the account. The server list comes with it, so the TV joins every server at once.</p>
+  <div class="boards" id="link"></div>
+</section>
+
+<script>
+/* ---------- data ---------- */
+const SERVERS=[
+  {name:'my-server',i:'M',c:'#c2410c',cnt:''},
+  {name:'gmod-devs',i:'G',c:'#1d4ed8',cnt:'12'},
+  {name:'minecraft-crew',i:'C',c:'#0f766e',cnt:''},
+  {name:'lan-party',i:'L',c:'#7c3aed',cnt:'3'},
+  {name:'dovecross',i:'D',c:'#be123c',cnt:''}
+];
+const MSGS=[
+  {t:'04:41',w:'jonas',x:'Server restarted, new map is live.'},
+  {t:'04:42',w:'ellie',x:'Finally. The old spawn was cursed.'},
+  {t:'04:44',w:'patrick',x:'Voice works over the UDP tunnel now, jump in Lounge.'},
+  {t:'04:50',w:'patrick',x:'History paging is done too: 50 messages per page, loads as you scroll up.'},
+  {t:'04:58',w:'nova',img:'base_v2.png · 412 KB'}
+];
+const MEMBERS=[['patrick','Owner','online'],['nova','Mod','online'],['kiwi','Mod','online'],['jonas','','online'],['ellie','','idle']];
+const AV={P:'#f59e0b',N:'#a7f3d0',K:'#c7d2fe',J:'#bfdbfe',E:'#fbcfe8'};
+
+/* ---------- icons ---------- */
+const I={
+ plus:s=>`<svg width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 2v12M2 8h12"/></svg>`,
+ menu:s=>`<svg width="${s}" height="${s}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 5h14M3 10h14M3 15h14"/></svg>`,
+ users:s=>`<svg width="${s}" height="${s}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="7.5" cy="7" r="3"/><path d="M2 17c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><path d="M13 4.2a3 3 0 0 1 0 5.6M15 12.3c1.8.6 3 2.4 3 4.7"/></svg>`,
+ chev:s=>`<svg width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>`,
+ mic:s=>`<svg width="${s}" height="${s}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="7" y="2.5" width="6" height="10" rx="3"/><path d="M4 9.5a6 6 0 0 0 12 0M10 15.5V18"/></svg>`,
+ head:s=>`<svg width="${s}" height="${s}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 13v-2a7 7 0 0 1 14 0v2"/><rect x="2.5" y="12" width="4" height="5.5" rx="1.5"/><rect x="13.5" y="12" width="4" height="5.5" rx="1.5"/></svg>`,
+ back:s=>`<svg width="${s}" height="${s}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l-6 6 6 6"/></svg>`,
+ tv:s=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 20.5h8"/></svg>`,
+ wifi:s=>`<svg width="${s}" height="${s}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2.5 7.5a11 11 0 0 1 15 0M5 10.5a7.5 7.5 0 0 1 10 0M7.6 13.4a3.6 3.6 0 0 1 4.8 0"/><circle cx="10" cy="16" r=".9" fill="currentColor"/></svg>`,
+ lock:s=>`<svg width="${s}" height="${s}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="9" width="12" height="8.5" rx="2"/><path d="M7 9V6.5a3 3 0 0 1 6 0V9"/></svg>`
+};
+const nameCol=w=>`var(--n-${w})`;
+const av=(l,sz,ring)=>`<span class="av" style="width:${sz}px;height:${sz}px;background:${AV[l]};font-size:${Math.round(sz*.42)}px;${ring?`box-shadow:0 0 0 ${Math.max(2,sz/14)}px var(--bg),0 0 0 ${Math.max(4,sz/7)}px var(--accent)`:''}">${l}</span>`;
+
+/* ---------- desktop / tablet ---------- */
+function tabsStrip(n,big){
+  return `<div class="tabs" ${big?'style="padding:12px 20px 0"':''}>${SERVERS.slice(0,n).map((s,k)=>`
+    <button class="tab ${k==0?'on':''}" ${big?'style="padding:14px 20px;font-size:16px"':''}><span class="sicon" style="background:${s.c}${big?';width:26px;height:26px;font-size:14px':''}">${s.i}</span>${s.name}<span class="cnt">${s.cnt}</span></button>`).join('')}
+    <button class="tab add">${I.plus(16)}</button></div>`;
+}
+function channels(w,pad,big,extra){
+  const f=big?'style="padding:12px 12px;font-size:16px"':'';
+  return `<nav class="chans" style="width:${w}px;padding:${pad};${extra||''}">
+    <div class="lbl" style="padding:0 10px 6px">Text</div>
+    <button class="ch on" ${f}>general</button>
+    <button class="ch" ${f}>lua-dev <span class="badge">4</span></button>
+    <button class="ch dim" ${f}>screenshots</button>
+    <div class="lbl" style="padding:18px 10px 6px">Voice</div>
+    <div class="vc"><span style="font-weight:600${big?';font-size:16px':''}">Lounge</span><div class="ppl">${av('P',big?34:28,1)}${av('N',big?34:28)}${av('K',big?34:28)}</div></div>
+    <button class="ch dim" ${f}>Gaming</button>
+    <div class="me">${av('P',big?38:32)}<span><b style="font-weight:600">patrick</b><small>in Lounge</small></span></div>
+  </nav>`;
+}
+function messages(big){
+  const fs=big?'font-size:16px':'';
+  return MSGS.map(m=>`<div class="m" style="${fs}"><span class="t">${m.t}</span><div class="stack"><span class="w" style="color:${nameCol(m.w)}">${m.w}</span>${m.img?`<div class="img">${m.img}</div>`:`<span class="x">${m.x}</span>`}</div></div>`).join('');
+}
+function desktop(scheme){
+  return `<div class="z dev" data-scheme="${scheme}" style="width:1280px;height:800px">
+    ${tabsStrip(3)}
+    <div class="body">
+      ${channels(230,'20px 14px')}
+      <main class="chat">
+        <header class="chead" style="padding:18px 28px;align-items:baseline"><h1>general</h1><span class="topic">Server talk, no spoilers</span></header>
+        <div class="msgs" style="padding:20px 28px"><div class="day">Today</div>${messages()}</div>
+        <div style="padding:0 28px 20px"><div class="comp">${I.plus(18)}<span class="ph">Message general</span><span class="send">Send</span></div></div>
+      </main>
+      <aside class="info" style="width:260px;padding:20px">
+        <div style="display:flex;flex-direction:column;gap:8px"><span class="lbl">Connection</span><span class="addr">my-server.at.ply.gg:41234</span>
+          <span class="kv"><span>Latency</span><span>38 ms</span></span><span class="kv"><span>Encryption</span><span style="color:var(--ok)">On</span></span></div>
+        <div style="display:flex;flex-direction:column;gap:10px"><span class="lbl">Members · 5 online</span>
+          ${MEMBERS.map(m=>`<div class="mem"><span class="dot" style="background:var(--${m[2]})"></span><span>${m[0]}</span><span class="r">${m[1]}</span></div>`).join('')}</div>
+      </aside>
+    </div></div>`;
+}
+function tablet(scheme){
+  return `<div class="z dev" data-scheme="${scheme}" style="width:1180px;height:820px">
+    <div style="height:24px;background:var(--bar);flex:none;display:flex;justify-content:space-between;padding:0 22px;align-items:center;font-size:12px;font-weight:600"><span>9:41</span><span>100%</span></div>
+    ${tabsStrip(4,true)}
+    <div class="body">
+      ${channels(260,'22px 16px',true)}
+      <main class="chat">
+        <header class="chead" style="padding:16px 28px"><h1>general</h1><span class="topic" style="flex:1">Server talk, no spoilers</span>
+          <button class="ibtn solid" style="width:48px;height:48px">${I.users(22)}</button></header>
+        <div class="msgs" style="padding:22px 28px;gap:20px"><div class="day">Today</div>${messages(true)}</div>
+        <div style="padding:0 28px 22px"><div class="comp" style="padding:14px 16px;font-size:16px">${I.plus(20)}<span class="ph">Message general</span><span class="send" style="padding:11px 20px;font-size:15px">Send</span></div></div>
+      </main>
+    </div>
+    <div style="height:22px;flex:none;background:var(--bg);display:flex;justify-content:center;align-items:center"><span style="width:180px;height:5px;border-radius:3px;background:var(--text);opacity:.8"></span></div>
+  </div>`;
+}
+
+/* ---------- phone ---------- */
+const statusBar=`<div class="sb"><span>9:41</span><span style="display:flex;gap:6px;align-items:center">${I.wifi(16)}<span style="width:24px;height:12px;border:1.5px solid currentColor;border-radius:3px;position:relative"><span style="position:absolute;inset:1.5px;right:5px;background:currentColor;border-radius:1px"></span></span></span></div>`;
+function strip(){
+  return `<div class="strip">${SERVERS.slice(0,3).map((s,k)=>`<button class="chip ${k==0?'on':''}"><span class="sicon" style="background:${s.c}">${s.i}</span>${s.name}${s.cnt?`<span class="cnt">${s.cnt}</span>`:''}</button>`).join('')}
+    <span style="flex:1"></span></div>`;
+}
+function stripWithChevron(){
+  return `<div style="position:relative;flex:none">${strip()}
+    <button class="ibtn" style="position:absolute;right:6px;bottom:2px;background:var(--bar);box-shadow:-14px 0 12px var(--bar)">${I.chev(18)}</button></div>`;
+}
+function phoneChat(){
+  return `<div class="pbar"><button class="ibtn">${I.menu(22)}</button><h1>general<small>Server talk, no spoilers</small></h1><button class="ibtn">${I.users(22)}</button></div>
+    <div class="msgs" style="padding:16px 18px;gap:16px;background:var(--bg)">
+      <div class="day">Today</div>
+      ${MSGS.map(m=>`<div class="pm"><div class="h"><span style="font-weight:600;color:${nameCol(m.w)}">${m.w}</span><span class="t">${m.t}</span></div>${m.img?`<div class="img" style="width:100%;height:170px">${m.img}</div>`:`<span style="line-height:1.5">${m.x}</span>`}</div>`).join('')}
+      <div class="typing">kiwi is typing…</div>
+    </div>
+    <div style="padding:8px 12px 6px;background:var(--bg);flex:none"><div class="comp" style="border-radius:22px;padding:8px 8px 8px 14px">${I.plus(20)}<span class="ph" style="font-size:15px">Message general</span><span class="send" style="border-radius:16px;padding:9px 14px">Send</span></div></div>
+    <div class="home"></div>`;
+}
+function phone(scheme,variant){
+  let inner=statusBar+stripWithChevron()+phoneChat();
+  if(variant==='drawer'){
+    inner+=`<div class="scrim"></div><div class="drawer">
+      <div style="height:44px;flex:none"></div>
+      <div style="display:flex;align-items:center;gap:12px;padding:10px 18px 14px;border-bottom:1px solid var(--line)"><span class="sicon" style="background:#c2410c;width:34px;height:34px;border-radius:9px;font-size:15px">M</span>
+        <span style="flex:1"><b style="font:700 18px 'Space Grotesk',sans-serif">my-server</b><small style="display:flex;align-items:center;gap:5px;color:var(--muted);font-size:12px">${I.lock(12)} Encrypted · 38 ms</small></span></div>
+      <div style="flex:1;display:flex;flex-direction:column">${channels(304,'16px 14px 10px',true,'border:none;flex:1')}</div>
+      <div class="home" style="background:transparent"></div></div>`;
+  }
+  if(variant==='servers'){
+    inner+=`<div class="scrim"></div><div class="sheet">
+      ${statusBar.replace('class="sb"','class="sb" style="background:transparent"')}
+      <div style="padding:6px 16px 10px;display:flex;align-items:center"><b style="font:700 20px 'Space Grotesk',sans-serif;flex:1">Your servers</b><span style="color:var(--muted);font-size:13px">Hold to reorder</span></div>
+      <div style="padding:0 10px;display:flex;flex-direction:column;gap:2px">
+      ${SERVERS.map((s,k)=>`<div class="srow ${k==0?'on':''}"><span class="sicon" style="background:${s.c}">${s.i}</span><span class="nm">${s.name}<small>${['5 online · you\'re in Lounge','2 online','offline','8 online','1 online'][k]}</small></span>${s.cnt?`<span class="badge">${s.cnt}</span>`:''}</div>`).join('')}
+      </div>
+      <div style="display:flex;gap:8px;padding:12px 16px 8px">
+        <button style="flex:1;display:flex;gap:8px;align-items:center;justify-content:center;padding:12px;border-radius:12px;background:var(--sunken);font-weight:600">${I.plus(16)} Add server</button>
+        <button style="flex:1;padding:12px;border-radius:12px;background:var(--sunken);font-weight:600;text-align:center">Host a server</button></div>
+      <div class="handle"></div></div>`;
+  }
+  return `<div class="z dev" data-scheme="${scheme}" style="width:390px;height:844px;position:relative">${inner}</div>`;
+}
+
+/* ---------- TV ---------- */
+function tvMain(){
+  const S=SERVERS.slice(0,4);
+  return `<div class="z dev" data-scheme="dark" style="width:1920px;height:1080px;font-size:24px">
+    <div class="tabs" style="padding:36px 72px 0;gap:8px">${S.map((s,k)=>`<div class="tab ${k==0?'on':''}" style="padding:18px 28px;font-size:26px;gap:14px;border-radius:16px 16px 0 0"><span class="sicon" style="background:${s.c};width:36px;height:36px;font-size:18px;border-radius:9px">${s.i}</span>${s.name}<span class="cnt" style="font-size:20px">${s.cnt}</span></div>`).join('')}</div>
+    <div class="body" style="padding:0 0 0 0">
+      <nav class="chans" style="width:400px;padding:36px 28px 36px 72px;gap:8px">
+        <div class="lbl" style="font-size:16px;padding:0 16px 8px">Text</div>
+        <div class="ch" style="padding:14px 18px;font-size:26px;border-radius:12px;background:var(--sunken)">general</div>
+        <div class="ch tvfocus" style="padding:14px 18px;font-size:26px;border-radius:12px">lua-dev <span class="badge" style="font-size:18px;line-height:28px;padding:0 11px;border-radius:14px">4</span></div>
+        <div class="ch dim" style="padding:14px 18px;font-size:26px">screenshots</div>
+        <div class="lbl" style="font-size:16px;padding:26px 16px 8px">Voice</div>
+        <div class="ch dim" style="padding:14px 18px;font-size:26px;color:var(--text)">Lounge <span style="font-size:20px;color:var(--voice)">3</span></div>
+        <div class="ch dim" style="padding:14px 18px;font-size:26px">Gaming</div>
+      </nav>
+      <main class="chat">
+        <header class="chead" style="padding:30px 48px;align-items:baseline;gap:20px"><h1 style="font-size:40px">general</h1><span class="topic">Server talk, no spoilers</span></header>
+        <div class="msgs" style="padding:30px 48px;gap:28px">
+          ${MSGS.slice(0,4).map(m=>`<div style="display:flex;flex-direction:column;gap:6px"><div style="display:flex;gap:16px;align-items:baseline"><span style="font-weight:600;color:${nameCol(m.w)};font-size:24px">${m.w}</span><span style="color:var(--faint);font-size:18px">${m.t}</span></div><span style="font-size:28px;line-height:1.45">${m.x}</span></div>`).join('')}
+        </div>
+        <div style="padding:0 48px 30px"><div class="comp" style="padding:20px 26px;border-radius:18px;font-size:24px;gap:18px"><span style="color:var(--muted)">${I.mic(30)}</span><span class="ph">Press OK to type, or hold the mic button to speak</span></div></div>
+      </main>
+      <aside class="info" style="width:460px;padding:36px 72px 36px 36px;gap:22px">
+        <span class="lbl" style="font-size:16px">Voice · Lounge</span>
+        ${[['P','patrick',1,'speaking'],['N','nova',0,''],['K','kiwi',0,'muted']].map(p=>`<div style="display:flex;align-items:center;gap:18px">${av(p[0],64,p[2])}<span style="font-size:26px;flex:1">${p[1]}<small style="display:block;font-size:18px;color:${p[3]=='speaking'?'var(--voice)':'var(--faint)'}">${p[3]||'listening'}</small></span></div>`).join('')}
+        <div style="margin-top:12px;padding:18px 22px;border-radius:14px;background:var(--accent);color:var(--on-accent);font-weight:600;font-size:24px;text-align:center">Join voice</div>
+        <div style="margin-top:auto;font-size:18px;color:var(--faint);line-height:1.5">Uses the TV's mic or the remote's mic. Phone as mic: later.</div>
+      </aside>
+    </div>
+    <div style="flex:none;padding:22px 72px 34px;border-top:1px solid var(--line);background:var(--bg)"><div class="hint">
+      <span><span class="key">◀ ▶</span>Switch server</span><span><span class="key">▲ ▼</span>Move</span><span><span class="key">OK</span>Open</span><span><span class="key">${I.mic(18)}</span>Hold to talk</span><span><span class="key">BACK</span>Servers</span></div></div>
+  </div>`;
+}
+function qrSvg(size,seed){
+  const n=29;let x=seed||7;const r=()=>{x=(x*1103515245+12345)&0x7fffffff;return x/0x7fffffff};
+  const cell=size/n;let out='';
+  const finder=(cx,cy)=>{out+=`<rect x="${cx*cell}" y="${cy*cell}" width="${7*cell}" height="${7*cell}" fill="#111"/><rect x="${(cx+1)*cell}" y="${(cy+1)*cell}" width="${5*cell}" height="${5*cell}" fill="#fff"/><rect x="${(cx+2)*cell}" y="${(cy+2)*cell}" width="${3*cell}" height="${3*cell}" fill="#111"/>`};
+  const inF=(i,j)=>(i<8&&j<8)||(i>n-9&&j<8)||(i<8&&j>n-9);
+  for(let i=0;i<n;i++)for(let j=0;j<n;j++){if(inF(i,j))continue;if(r()>.52)out+=`<rect x="${i*cell}" y="${j*cell}" width="${cell+.3}" height="${cell+.3}" fill="#111"/>`}
+  finder(0,0);finder(n-7,0);finder(0,n-7);
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${out}</svg>`;
+}
+function tvSignIn(){
+  return `<div class="z dev" data-scheme="dark" style="width:1920px;height:1080px;font-size:26px;flex-direction:row;background:var(--bg)">
+    <div style="flex:1;padding:120px 0 100px 140px;display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;gap:18px"><span class="sicon" style="background:var(--accent);color:var(--on-accent);width:56px;height:56px;border-radius:14px;font-size:30px">Z</span><span style="font:700 40px 'Space Grotesk',sans-serif">Zuno</span></div>
+      <h1 style="font:700 76px/1.1 'Space Grotesk',sans-serif;margin:90px 0 30px;max-width:900px">Sign in with your phone</h1>
+      <ol style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:26px;color:var(--soft);font-size:30px">
+        ${['Open Zuno on your phone, or just point the camera at the code','Make sure the phone is on the same Wi-Fi as this TV','Type the code the TV shows into your phone'].map((t,k)=>`<li style="display:flex;gap:22px;align-items:center"><span style="width:52px;height:52px;border-radius:50%;background:var(--sunken);display:flex;align-items:center;justify-content:center;font:700 26px 'Space Grotesk',sans-serif;color:var(--text);flex:none">${k+1}</span>${t}</li>`).join('')}
+      </ol>
+      <div style="margin-top:auto;display:flex;gap:20px">
+        <div class="tvfocus" style="padding:20px 30px;border-radius:14px;background:var(--sunken);font-weight:600">Use a server invite instead</div>
+        <div style="padding:20px 30px;border-radius:14px;background:var(--sunken);font-weight:600;color:var(--soft)">Import a key file</div>
+      </div>
+    </div>
+    <div style="width:760px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:34px;padding-right:80px">
+      <div class="qr">${qrSvg(440,11)}</div>
+      <div style="display:flex;align-items:center;gap:14px;color:var(--muted)"><span style="width:14px;height:14px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 25%,transparent)"></span>Waiting for your phone…</div>
+      <div style="color:var(--faint);font-size:20px">Code expires in 1:52</div>
+    </div>
+  </div>`;
+}
+function tvCode(){
+  return `<div class="z dev" data-scheme="dark" style="width:1920px;height:1080px;font-size:26px;align-items:center;justify-content:center;gap:36px;background:var(--bg);text-align:center">
+    <div style="display:flex;align-items:center;gap:16px;color:var(--muted)">${av('P',56)}<span style="font-size:28px">patrick's phone found</span></div>
+    <h1 style="font:700 64px 'Space Grotesk',sans-serif;margin:0">Type this code on your phone</h1>
+    <div class="code"><span>4</span><span>8</span><span>2</span><i></i><span>9</span><span>1</span><span>3</span></div>
+    <p style="margin:0;color:var(--muted);max-width:980px;line-height:1.5">Nothing is sent until the code matches. If you didn't scan a code just now, press BACK.</p>
+    <div style="display:flex;align-items:center;gap:12px;color:var(--faint);font-size:20px">${I.lock(20)} Direct connection over your Wi-Fi · end-to-end encrypted</div>
+  </div>`;
+}
+function phoneCode(){
+  return `<div class="z dev" data-scheme="light" style="width:390px;height:844px;position:relative;background:var(--bg)">
+    ${statusBar.replace('class="sb"','class="sb" style="background:var(--bg)"')}
+    <div style="display:flex;align-items:center;padding:6px 10px"><button class="ibtn">${I.back(22)}</button><b style="flex:1;text-align:center;margin-right:40px">Link a device</b></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;padding:20px 26px;gap:16px;text-align:center">
+      <span style="width:84px;height:84px;border-radius:24px;background:var(--sunken);display:flex;align-items:center;justify-content:center;color:var(--soft)">${I.tv(44)}</span>
+      <h2 style="margin:6px 0 0;font:700 24px 'Space Grotesk',sans-serif">Android TV wants to sign in</h2>
+      <p style="margin:0;color:var(--muted);line-height:1.5">Type the code shown on the TV. It will get your whole account, including your 5 servers.</p>
+      <div class="pcode" style="margin-top:8px"><span>4</span><span>8</span><span>2</span><i></i><span>9</span><span class="cur"></span><span></span></div>
+      <span style="font-size:12px;color:var(--faint);display:flex;gap:6px;align-items:center">${I.wifi(14)} Connected to the TV over Wi-Fi</span>
+    </div>
+    <div style="padding:0 18px 12px"><div class="primary off">Send my account to the TV</div></div>
+    <div class="kb">${['1','2','3','4','5','6','7','8','9','','0','⌫'].map(k=>`<span ${k===''?'style="background:transparent"':''}>${k}</span>`).join('')}</div>
+    <div class="home" style="background:var(--sunken)"></div>
+  </div>`;
+}
+
+/* ---------- mount ---------- */
+function mount(id,cls,cap,w,h,scale,html){
+  const el=document.createElement('div');el.className='board';
+  el.innerHTML=`<p class="cap">${cap}</p><div class="frame ${cls}" style="width:${w*scale}px;height:${h*scale}px">${html}</div>`;
+  el.querySelector('.dev').style.transform=`scale(${scale})`;
+  document.getElementById(id).appendChild(el);
+}
+mount('desk','', 'Desktop · light (original)',1280,800,.6,desktop('light'));
+mount('desk','', 'Desktop · dark',1280,800,.6,desktop('dark'));
+mount('tab','tablet','Tablet landscape · light',1180,820,.6,tablet('light'));
+mount('tab','tablet','Tablet landscape · dark',1180,820,.6,tablet('dark'));
+mount('phone','phone','Chat · light',390,844,.8,phone('light'));
+mount('phone','phone','Channels drawer · light',390,844,.8,phone('light','drawer'));
+mount('phone','phone','Chat · dark',390,844,.8,phone('dark'));
+mount('phone','phone','Server list pulled down · dark',390,844,.8,phone('dark','servers'));
+mount('tv','tv','Chat + voice, focus on lua-dev',1920,1080,.5,tvMain());
+mount('link','tv','1 · TV first screen',1920,1080,.4,tvSignIn());
+mount('link','tv','2 · After the scan: TV shows the code',1920,1080,.4,tvCode());
+mount('link','phone','3 · Phone types the code',390,844,.62,phoneCode());
+</script>
+</body>
+</html>

@@ -20,7 +20,7 @@ Repo: https://github.com/MightyX3N/Zuno · Studio: DoveCross · Author: MightyX3
 | Topic | Decision |
 |---|---|
 | Name | Zuno |
-| Native client | LÖVE 11.5 (LuaJIT): Windows, Linux, Android |
+| Native client | LÖVE 11.5 (LuaJIT): Windows, Linux, Android (phone, tablet and Android TV) |
 | UI architecture | **One Lua UI for every platform** (see 6.0). Built-in components, layouts and addon widgets are written once in Lua against a small **platform API**. Only the backend that implements that API exists twice: LÖVE and browser |
 | Browser client | **Wasmoon** (Lua 5.4 in WASM) runs the same Lua UI as the native client. JS only implements the platform API: drawing on a `<canvas>`, with **real HTML `<input>`/`<textarea>` elements placed over the canvas** for typing (proper iOS/Android keyboard, IME, emoji, paste). Not love.js (no JS FFI, ~10–15 MB, bad iOS keyboard) |
 | Lua dialect | Shared code (protocol, UI, layouts, addons) must run on **both LuaJIT (5.1) and Lua 5.4**: no `goto`, no 5.4-only `//` or bitwise operators, use a small `compat` module for bit ops and integer math |
@@ -33,7 +33,7 @@ Repo: https://github.com/MightyX3N/Zuno · Studio: DoveCross · Author: MightyX3
 | Wire format | `u32` length prefix + MessagePack body |
 | Transport | Raw TCP for native clients, WebSocket for browser, **same port**: server sniffs first bytes (`GET ` = WebSocket upgrade) |
 | Voice transport | UDP (native) / Opus frames over the WebSocket (browser) |
-| Default layout | **Tabs** (light, servers as tabs along the top) |
+| Default layout | **Tabs** (servers as tabs along the top), light and dark, with desktop / tablet / phone / TV variants (see 6.1) |
 | Website hosting | GitHub Pages via Actions, deploys `web/`. Custom domain `zuno.dovecross.site` |
 | Docker | Not used |
 
@@ -102,6 +102,18 @@ Zuno works on the free plan, but if the host has Premium, Zuno uses what it adds
 5. On approval: full account package sent end-to-end encrypted. No recovery key needed in transit.
 6. **One scan only**: QR dies on first scan. A second scan attempt cancels the link and warns "Someone else tried to use this link code". Expires after 2 minutes regardless.
 
+### 5.1.1 Reverse link: the new device shows the QR (TV, desktop without camera)
+A TV has no camera and typing with a remote is painful, so the **new device shows the QR and the phone scans it** (same idea as signing into Netflix/YouTube on a TV).
+1. New device (TV) → "Sign in with your phone" (the TV's first screen) → shows QR. QR holds the TV's **temporary key + session ID + its LAN address and a temporary port**. Same `https://zuno.dovecross.site/link#<payload>` link format, flagged as a reverse link.
+2. Phone scans it (system camera or the Zuno app's scanner) and connects **straight to the TV over the local network**. No Zuno server needed, because the TV doesn't have an account or any servers yet.
+3. TV shows the **6-digit code**; the phone asks the user to type it in. Nothing is sent until it matches (same rule as 5.1).
+4. Phone sends the full account package end-to-end encrypted. The account includes the **server list, so the TV joins all the user's servers at once**. Settings and layout choices come with it.
+5. TV shows "Signed in as <name>" with a Cancel button for a few seconds before it connects to the servers.
+6. Same one-scan rule and 2-minute expiry as 5.1.
+- **Fallback when LAN fails** (guest Wi-Fi, client isolation, phone on mobile data, or the phone is the browser client, which can't open LAN connections from an HTTPS page): the TV asks for one server invite address (typed once or entered as a short invite code) and the link continues through that server as in 5.1.
+- Desktops without a camera use the same reverse flow; the typed short code from 5.1 stays as the last fallback.
+- **Join a server from the phone**: on a linked TV, an invite opened on the phone can be sent to the user's other devices ("Also join on: Living room TV"), since all devices share the account and server list sync.
+
 ### 5.2 Backup / transfer file
 - Settings → "Export account" → `<name>.zunokey` file (same contents as the QR package).
 - Encrypted with a generated **recovery key** (e.g. `K7QM-9XTD-4HPA-W2RE-8NVC`), shown once, with Copy / Save / Print. Key derived with Argon2id, data sealed with XChaCha20-Poly1305.
@@ -163,10 +175,11 @@ Keys are free to make, so anyone can create endless identities. Servers need gat
 - The whole client UI is **Lua, written once**: built-in components, layout packs, layout scripts and addon widgets. Native runs it on LuaJIT inside LÖVE; the browser runs the same files on Wasmoon.
 - The UI talks to the platform only through a small **platform API**:
   - draw: rect, rounded rect, line, image, text (with font, size, color, clipping), measure text
-  - input: pointer/touch, wheel/scroll, keys, focus
+  - input: pointer/touch, wheel/scroll, keys, focus, and **D-pad / arrow-key focus navigation** (move focus between components and items, select, back). Needed for TV remotes; also gives keyboard-only use on desktop
+  - device info: form factor (desktop / phone / tablet / TV), main input type (mouse, touch, remote), system light/dark preference
   - text fields: create / move / resize / read / destroy a native text field
   - clipboard write (read only after a user paste), open link (with confirm), sound playback
-  - timers, window size, safe areas (phone notch / keyboard height)
+  - timers, window size, safe areas (phone notch / keyboard height / TV overscan)
 - **Two backends** implement that API and nothing else:
   - **LÖVE**: `love.graphics`, `love.keyboard`/`love.textinput`, `love.system` clipboard.
   - **Browser**: a full-window `<canvas>` for drawing. Text fields are **real HTML `<input>`/`<textarea>` elements positioned over the canvas** where the Lua UI places them, styled to match the layout. That gives the proper on-screen keyboard on iOS/Android, IME, emoji picker, paste and spellcheck.
@@ -175,13 +188,20 @@ Keys are free to make, so anyone can create endless identities. Servers need gat
 - Shared Lua lives in `ui/` (plus `protocol/` and `layouts/`); the Pages workflow copies these into the site at deploy so the browser loads the exact same files.
 
 ### 6.1 Layout packs
-- A **layout pack** = mostly data (Lua table): regions, which built-in components go where, theme tokens (colors, fonts, spacing), assets, and a **mobile variant**.
+- A **layout pack** = mostly data (Lua table): regions, which built-in components go where, theme tokens (colors, fonts, spacing), assets, plus **form factors** and **color schemes** (below).
+- **Color schemes**: every pack defines a **light and a dark** token set. The client follows the system setting by default, with a manual Light / Dark / System choice. A pack that only defines one scheme uses it for both.
+- **Form factors**: a pack can define variants for **desktop, phone, tablet and TV**. The client picks one from screen size and input type (TV = remote / D-pad). Missing variant → nearest one the pack has (tablet → desktop or phone, TV → tablet), and if the pack has none that fit, the default Tabs variant for that form factor.
+- **Tabs (default) per form factor**:
+  - Desktop: servers as tabs along the top, channels left, chat, member/info panel right.
+  - Tablet: same as desktop with larger touch targets; member panel opens on demand.
+  - Phone: server tabs become a horizontal strip at the top (scrolls when there are many) with a pull-down switcher; channels slide in from the left, members from the right; chat is full screen.
+  - TV: 10-foot UI, large text, everything reachable with the D-pad. Built for reading chat, sitting in voice and (later) watching streams. Typing opens the system on-screen keyboard or voice input. First screen when not signed in = reverse-link QR (5.1.1).
 - Built-in components: server list, channel list, message list, composer, member list, voice panel, top bar, settings.
 - Optional **sandboxed scripts**: no `io`, `os`, `ffi`, `require`, network; instruction limit + memory cap. Custom widgets draw through the same platform API as the built-in components (see 6.0), so a layout works unchanged on LÖVE and in the browser.
 - Servers can ship a pack; clients download on connect and cache by hash.
-- User controls: "Use server layouts" toggle + per-server override. Missing mobile variant → default mobile layout.
+- User controls: "Use server layouts" toggle + per-server override, Light / Dark / System.
 - Built-in packs (from the design canvas): **tabs** (default), **terminal**, **messenger** (early-2000s IM look, no MSN branding), **deck** (multi-column).
-- Design previews: [`docs/design/layouts.html`](docs/design/layouts.html) (exported design canvas with all four layouts; open it in a browser)
+- Design previews: [`docs/design/layouts.html`](docs/design/layouts.html) (exported design canvas with all four layouts) and [`docs/design/tabs-variants.html`](docs/design/tabs-variants.html) (Tabs in dark mode and on tablet, phone and TV). Open them in a browser
 
 ### 6.2 Addons (features, not just theming)
 
@@ -271,6 +291,9 @@ docs/       hosting, modding, protocol docs
 ### Phase 2: Accounts across devices + core features
 - [ ] Export / import `.zunokey` file with recovery key (Argon2id + XChaCha20-Poly1305)
 - [ ] QR device linking (temporary key, relay through a server, typed 6-digit code, one-scan, 2-min expiry, warning on second scan)
+- [ ] Reverse link (5.1.1): new device shows QR, phone scans, direct LAN connection, typed 6-digit code
+- [ ] Reverse link fallback through one server invite when LAN fails
+- [ ] "Also join on my other devices" when opening an invite
 - [ ] Fallback typed link code for devices without a camera
 - [ ] `web/link/` handler page
 - [ ] Streamer mode (blur + reveal, Copy buttons, OBS/Streamlabs auto-detect on desktop)
@@ -306,6 +329,9 @@ docs/       hosting, modding, protocol docs
 ### Phase 4: Layouts and addons
 - [ ] Layout pack format (Lua table spec) + loader
 - [ ] Move Tabs layout into `layouts/tabs/` as a pack
+- [ ] Light / dark color schemes in the pack format + Light / Dark / System setting
+- [ ] Form-factor variants in the pack format (desktop / phone / tablet / TV) with fallback rules
+- [ ] D-pad / arrow-key focus navigation in the platform API and all built-in components
 - [ ] Port Terminal, Messenger, Deck packs
 - [ ] Server-shipped packs: download on connect, cache by hash
 - [ ] Sandboxed layout scripts (restricted env, instruction limit, memory cap) + widget draw API
@@ -322,7 +348,10 @@ docs/       hosting, modding, protocol docs
 ### Phase 5: Android
 - [ ] LÖVE Android build (APK) via CI
 - [ ] Android arm64 builds of native libs
-- [ ] Mobile variants of all four built-in layouts
+- [ ] Tabs: phone and tablet variants (see 6.1)
+- [ ] Phone variants of Terminal, Messenger, Deck
+- [ ] Android TV: Leanback launcher entry, D-pad navigation, overscan safe area, system on-screen keyboard
+- [ ] Tabs: TV variant + "Sign in with your phone" first screen
 - [ ] Touch input, on-screen keyboard handling
 - [ ] Android App Link for `zuno.dovecross.site/link` (assetlinks.json on Pages)
 
