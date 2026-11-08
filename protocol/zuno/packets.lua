@@ -32,12 +32,26 @@ P.client = {
   channel_create = { name = "channel", kind = "enum:text|voice", topic = "?str:200" },
   channel_update = { ch = "int", name = "?channel", topic = "?str:200" },
   channel_delete = { ch = "int" },
+  -- device linking relay (5.1): the server only forwards opaque, end-to-end encrypted bytes
+  link_open     = {},
+  link_join     = { sid = "str:16" },
+  link_data     = { sid = "str:16", d = "bin:60000" },
+  link_close    = { sid = "str:16" },
+  -- "Replace my key" (5.3): signed by the old key, moves the membership to the new key
+  rekey         = { new = "key", sig = "bin:64" },
 }
+
+-- What the old key signs for a key hand-over on one server.
+function P.rekey_message(server_key, new_key) return "zuno-rekey-v1:" .. server_key .. ":" .. new_key end
+
+-- What a guest connection (a device that is being linked, not a member) may send.
+P.GUEST_ALLOWED = { ping = true, link_join = true, link_data = true, link_close = true }
 
 -- Server packets (documented here; the client checks their basic shape).
 P.server = {
   pong = true, state = true, messages = true, msg = true, typing = true, presence = true,
   member = true, channel = true, channel_removed = true, err = true, notice = true,
+  link_opened = true, link_joined = true, link_data = true, link_event = true, rekeyed = true, member_rekeyed = true,
 }
 
 -- Error codes sent in `err` packets.
@@ -57,6 +71,8 @@ local function check_field(spec, v)
     return type(v) == "boolean"
   elseif kind == "str" then
     return type(v) == "string" and #v <= tonumber(arg) and compat.valid_utf8(v)
+  elseif kind == "bin" then
+    return type(v) == "string" and #v <= tonumber(arg)
   elseif kind == "text" then
     return type(v) == "string" and #v <= tonumber(arg) * 4 and compat.valid_utf8(v)
        and compat.utf8_len(v) <= tonumber(arg) and v:find("%S") ~= nil

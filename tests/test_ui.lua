@@ -35,7 +35,8 @@ local function fake_platform()
   function P.field(id)
     fields[id] = fields[id] or { text = "", get = function(f) return f.text end, set = function(f, t) f.text = t end,
       layout = function() end, draw = function() end, height = function() return 20 end,
-      focus = function(f) P.focused = f end, blur = function() end, focused = function(f) return P.focused == f end }
+      focus = function(f) P.focused = f end, blur = function() end, focused = function(f) return P.focused == f end,
+      set_secret = function() end }
     return fields[id]
   end
   return P

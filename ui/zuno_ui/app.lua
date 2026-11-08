@@ -3,6 +3,8 @@ local Theme = require("zuno_ui.theme")
 local Icons = require("zuno_ui.icons")
 local P_ = require("zuno.packets")
 local version = require("zuno.version")
+local AccountUI = require("zuno_ui.account_ui")
+local LinkUI = require("zuno_ui.link_ui")
 
 local App = {}
 App.__index = App
@@ -115,6 +117,40 @@ function App:avatar(key, name, x, y, size)
   self.P.text(letter, x + (size - self.P.measure(f, letter)) / 2, y + (size - self.P.line_height(f)) / 2, f, { 0.09, 0.1, 0.11, 1 })
 end
 
+----------------------------------------------------------------- streamer mode
+-- On when the user turned it on, or "auto" and a streaming / recording app is running.
+function App:streamer()
+  local s = self.ctl.settings.streamer
+  if s == "on" then return true end
+  if s == "off" then return false end
+  return self.P.recording_detected and self.P.recording_detected() or false
+end
+
+-- Draws a cover over a secret when streamer mode is on. Returns true when the secret may be
+-- shown (streamer mode off, or the user is holding the mouse on it).
+function App:secret(text, id, x, y, w, h)
+  if not self:streamer() then return true end
+  local P, T = self.P, self.T
+  local st = self.ui:hit("secret:" .. id, x, y, w, h, { tip = "Hidden in streamer mode. Hold to reveal." })
+  if st.pressed then return true end
+  local f = self:font("semibold", 12)
+  local label = "Hidden · hold to reveal"
+  local bw = math.min(w - 20, 260)
+  P.rect(x + 12, y + h / 2 - 12, bw, 24, Theme.alpha(T.faint, 0.25), 12)
+  self.ui:text_fit(label, x + 24, y + h / 2 - P.line_height(f) / 2, bw - 24, f, T.muted)
+  return false
+end
+
+function App:file_dropped(name, data)
+  if name:lower():find("%.zunokey$") then
+    AccountUI.open_import(self, { name = name, data = data })
+  elseif self.on_file_dropped then
+    self.on_file_dropped(name, data)
+  else
+    self.ctl:toast("To import an account, drop its .zunokey file here.")
+  end
+end
+
 function App:label(text, x, y)
   self.P.text(text:upper(), x, y, self:font("head_bold", 11), self.T.muted)
 end
@@ -131,6 +167,12 @@ end
 function App:draw()
   local ui, P = self.ui, self.P
   local w, h = P.size()
+  -- slow work runs one frame after its "working..." overlay was shown
+  if self.job and self.job.shown then
+    local j = self.job; self.job = nil
+    local ok, err = pcall(j.fn)
+    if not ok then self.ctl:toast("Something went wrong: " .. tostring(err), "error") end
+  end
   self.T = Theme.build(self.pack, self:theme_name())
   local T = self.T
   ui:begin(w, h)
@@ -146,16 +188,23 @@ function App:draw()
     self:draw_server(conn, 0, body_y, w, h - body_y)
   end
 
-  if self.settings_open then self:draw_settings(w, h) end
+  if self.settings_open then self:draw_settings(w, h) else self.settings_init = nil end
+  if self.modal then
+    if self.modal.kind == "export" then AccountUI.draw_export(self, w, h)
+    elseif self.modal.kind == "import" then AccountUI.draw_import(self, w, h)
+    elseif self.modal.draw then self.modal.draw(self, w, h) end
+  end
   if self.dialog then self:draw_dialog(w, h) end
   if self.menu then self:draw_menu(w, h) end
   self:draw_toasts(w, h)
   ui:draw_tooltip(T, self:font("medium", 12))
+  if self.job then AccountUI.draw_job(self, w, h); self.job.shown = true end
 
   -- global keys
   if ui:pressed("escape") then
     if self.menu then self.menu = nil
     elseif self.dialog then self.dialog = nil
+    elseif self.modal and not self.modal.sticky then self.modal = nil
     elseif self.settings_open then self.settings_open = false end
   end
   if ui:pressed(",") then
@@ -326,8 +375,12 @@ function App:draw_info(conn, entry, x, y, w, h)
   self:label("Connection", cx, cy); cy = cy + 22
   local addr = entry.address:gsub("#.*$", "")
   P.rect(cx, cy, iw, 32, T.sunken, 8)
-  self.ui:text_fit(addr, cx + 10, cy + 16 - P.line_height(self:font("head", 13)) / 2, iw - 20, self:font("head", 13), T.text)
   local copy = self.ui:hit("copyaddr", cx, cy, iw, 32, { tip = "Copy invite (address + server key)" })
+  if not self:streamer() or copy.hovered then
+    self.ui:text_fit(addr, cx + 10, cy + 16 - P.line_height(self:font("head", 13)) / 2, iw - 20, self:font("head", 13), T.text)
+  else
+    self.ui:text_fit("Address hidden · click to copy invite", cx + 10, cy + 16 - P.line_height(self:font("medium", 12)) / 2, iw - 20, self:font("medium", 12), T.muted)
+  end
   if copy.clicked then
     P.set_clipboard(addr .. (entry.key and ("#" .. entry.key:sub(1, 20)) or ""))
     self.ctl:toast("Invite copied. It includes the server key, so friends connect to the real server.")
@@ -340,12 +393,13 @@ function App:draw_info(conn, entry, x, y, w, h)
     cy = cy + 25
   end
   local status = ({ online = "Connected", connecting = "Connecting…", handshake = "Connecting…",
-    waiting = "Reconnecting…", key_changed = "Identity changed", outdated = "Version mismatch", offline = "Offline" })[conn.status] or conn.status
+    waiting = "Reconnecting…", key_changed = "Identity changed", outdated = "Version mismatch", offline = "Offline",
+    key_replaced = "Signed out" })[conn.status] or conn.status
   kv("Status", status, conn.status == "online" and T.ok or T.idle)
   kv("Latency", conn.latency and (conn.latency .. " ms") or "–")
   kv("Encryption", conn.status == "online" and "On" or "–", T.ok)
   if entry.key then
-    P.text("Server key " .. P_.fingerprint(entry.key):sub(1, 14), cx, cy, self:font("regular", 12), T.faint)
+    P.text("Server key " .. (self:streamer() and "hidden" or P_.fingerprint(entry.key):sub(1, 14)), cx, cy, self:font("regular", 12), T.faint)
     cy = cy + 22
   end
   cy = cy + 10
@@ -430,7 +484,9 @@ function App:draw_chat(conn, entry, v, x, y, w, h)
 
   -- status panels instead of the chat
   if conn.status ~= "online" and not ch then return self:draw_status_panel(conn, entry, x, y + hh + 1, w, h - hh - 1) end
-  if conn.status == "key_changed" or conn.status == "outdated" then return self:draw_status_panel(conn, entry, x, y + hh + 1, w, h - hh - 1) end
+  if conn.status == "key_changed" or conn.status == "outdated" or conn.status == "key_replaced" then
+    return self:draw_status_panel(conn, entry, x, y + hh + 1, w, h - hh - 1)
+  end
 
   local top = y + hh + 1
   local banner_h = 0
@@ -673,8 +729,10 @@ function App:draw_status_panel(conn, entry, x, y, w, h)
     local lines = self:wrap(f, (conn.error or "") .. " If the owner moved or reinstalled the server without its backup, this is expected. Otherwise, don't continue.", cw - 48)
     for i, l in ipairs(lines) do P.text(l, cx + 24, cy + 70 + (i - 1) * 21, f, T.soft) end
     local ky = cy + 80 + #lines * 21
-    P.text("Expected: " .. (entry.key and P_.fingerprint(entry.key) or (entry.fingerprint or "?"):upper()), cx + 24, ky, self:font("head", 13), T.soft)
-    P.text("Now:        " .. P_.fingerprint(conn.changed_key or ""), cx + 24, ky + 22, self:font("head", 13), T.danger)
+    if self:secret("keys", "keychange", cx + 20, ky - 4, cw - 40, 44) then
+      P.text("Expected: " .. (entry.key and P_.fingerprint(entry.key) or (entry.fingerprint or "?"):upper()), cx + 24, ky, self:font("head", 13), T.soft)
+      P.text("Now:        " .. P_.fingerprint(conn.changed_key or ""), cx + 24, ky + 22, self:font("head", 13), T.danger)
+    end
     if self:button("trust", cx + 24, cy + 300 - 60, 170, 38, "Trust the new identity", "danger") then
       self:confirm("Trust the new identity?", "Only do this if you're sure the owner changed the server.", "Trust it",
         function() conn:accept_new_key() end, true)
@@ -682,8 +740,9 @@ function App:draw_status_panel(conn, entry, x, y, w, h)
     if self:button("stayoff", cx + 206, cy + 300 - 60, 120, 38, "Stay offline", "secondary") then conn:disconnect(true) end
     return
   end
-  local title, text = "Connecting…", "Reaching " .. entry.address:gsub("#.*$", "")
+  local title, text = "Connecting…", "Reaching " .. (self:streamer() and "the server" or (entry.address:gsub("#.*$", "")))
   if conn.status == "outdated" then title, text = "Version mismatch", conn.error
+  elseif conn.status == "key_replaced" then title, text = "This device was signed out", conn.error
   elseif conn.status == "waiting" then
     title = "Can't reach the server"
     text = (conn.error and (conn.error:gsub("^%l", string.upper) .. ". ") or "") ..
@@ -695,6 +754,9 @@ function App:draw_status_panel(conn, entry, x, y, w, h)
   local by = cy + 54 + #lines * 21
   if conn.status == "waiting" or conn.status == "offline" then
     if self:button("retry2", cx, by, 120, 38, "Retry now", "primary") then conn.manual_off = nil; conn:retry_now() end
+  elseif conn.status == "key_replaced" then
+    if self:button("relink", cx, by, 170, 38, "Link this device", "primary") then LinkUI.open_receiver(self) end
+    if self:button("reimport", cx + 182, by, 150, 38, "Import account", "secondary") then AccountUI.open_import(self) end
   end
 end
 
@@ -707,6 +769,7 @@ end
 function App:input(id, x, y, w, placeholder, opts)
   local P, T = self.P, self.T
   local f = P.field(id, opts or {})
+  if opts and opts.hide_when_streaming then f:set_secret(self:streamer() and not f:focused()) end
   local focused = f:focused()
   P.rect(x, y, w, 44, T.bg, 10)
   P.rect_line(x, y, w, 44, focused and T.accent or T.input, 10, focused and 2 or 1)
@@ -729,6 +792,24 @@ function App:draw_add_page(x, y, w, h)
     cy = math.max(y + 24, cy - 50)
     P.text("Welcome to Zuno", cx, cy - 4, self:font("head_bold", 28), T.text)
     P.text("Join a friend's server, or host your own.", cx, cy + 34, self:font("regular", 15), T.muted)
+    -- returning users
+    local lf = self:font("semibold", 14)
+    local l1, l2 = "Import account file", "Link this device"
+    local w2 = P.measure(lf, l2)
+    local w1 = P.measure(lf, l1)
+    local rx = cx + total_w
+    local q = "Already use Zuno?"
+    local qf = self:font("regular", 14)
+    local lx2 = rx - w2
+    local lx1 = lx2 - 22 - w1
+    P.text(q, lx1 - 10 - P.measure(qf, q), cy + 34, qf, T.muted)
+    local s1 = ui:hit("welcome:import", lx1, cy + 30, w1, 26)
+    P.text(l1, lx1, cy + 34, lf, s1.hovered and T.accent_hover or T.accent)
+    P.text("·", lx2 - 14, cy + 34, qf, T.faint)
+    local s2 = ui:hit("welcome:link", lx2, cy + 30, w2, 26)
+    P.text(l2, lx2, cy + 34, lf, s2.hovered and T.accent_hover or T.accent)
+    if s1.clicked then AccountUI.open_import(self) end
+    if s2.clicked then LinkUI.open_receiver(self) end
     cy = cy + 76
     if not ctl.settings.name or self.welcome_name then
       self.welcome_name = true
@@ -758,7 +839,7 @@ function App:draw_add_page(x, y, w, h)
   P.text("Join a server", cx + 28, cy + 26, self:font("head_bold", 22), T.text)
   P.text("Paste the address the server owner gave you.", cx + 28, cy + 60, self:font("regular", 14), T.muted)
   P.text("Server address", cx + 28, cy + 96, self:font("semibold", 13), T.text)
-  local addr = self:input("add:address", cx + 28, cy + 118, cw - 56, "my-server.at.ply.gg:41234")
+  local addr = self:input("add:address", cx + 28, cy + 118, cw - 56, "my-server.at.ply.gg:41234", { hide_when_streaming = true })
   local function join()
     if not save_welcome_name() then return end
     local i, err = ctl:add_server(addr:get())
@@ -824,7 +905,7 @@ function App:draw_settings(w, h)
   local scrim = ui:hit("settings:scrim", 0, 0, w, h, { block = true, cursor = false })
   P.rect(0, 0, w, h, T.scrim)
   if scrim.clicked then self.settings_open = false; return end
-  local cw, ch = math.min(520, w - 40), 470
+  local cw, ch = math.min(560, w - 32), math.min(h - 32, 600)
   local cx, cy = (w - cw) / 2, math.max(20, (h - ch) / 2)
   ui:hit("settings:card", cx, cy, cw, ch, { block = true, cursor = false })
   self:card(cx, cy, cw, ch)
@@ -859,17 +940,66 @@ function App:draw_settings(w, h)
     if st.clicked then ctl:set_theme(o[1]) end
   end
 
-  y = y + 92
-  P.text("Your identity", cx + 28, y, self:font("semibold", 13), T.text)
-  local lines = self:wrap(self:font("regular", 13), "Your account is a key stored on this device. There's no password and no central account, so keep a backup once export arrives.", cw - 56)
+  y = y + 78
+  P.text("Streamer mode", cx + 28, y, self:font("semibold", 13), T.text)
+  P.text("Hides addresses, keys and codes", cx + 150, y + 1, self:font("regular", 12), T.faint)
+  local sopts = { { "off", "Off" }, { "auto", "Auto" }, { "on", "On" } }
+  P.rect(cx + 28, y + 22, cw - 56, 40, T.sunken, 10)
+  for i, o in ipairs(sopts) do
+    local bx = cx + 28 + (i - 1) * sw
+    local sel = (ctl.settings.streamer or "auto") == o[1]
+    local tip = o[1] == "auto" and "On while OBS or Streamlabs is running" or nil
+    local st = ui:hit("streamer:" .. o[1], bx, y + 22, sw, 40, { tip = tip })
+    if sel then P.rect(bx + 3, y + 25, sw - 6, 34, T.card, 8) end
+    local f = self:font(sel and "semibold" or "medium", 14)
+    local label = o[2]
+    if o[1] == "auto" and sel and self:streamer() then label = "Auto · on now" end
+    P.text(label, bx + (sw - P.measure(f, label)) / 2, y + 42 - P.line_height(f) / 2, f, sel and T.text or T.soft)
+    if st.clicked then ctl:set_streamer(o[1]) end
+  end
+
+  y = y + 78
+  P.text("Your account", cx + 28, y, self:font("semibold", 13), T.text)
+  local lines = self:wrap(self:font("regular", 13), "Your account is a key on this device: no password, no central account. Back it up so you can restore it, or link your other devices.", cw - 56)
   for i, l in ipairs(lines) do P.text(l, cx + 28, y + 22 + (i - 1) * 19, self:font("regular", 13), T.muted) end
   local fy = y + 30 + #lines * 19
   P.rect(cx + 28, fy, cw - 56, 40, T.sunken, 8)
-  P.text(P_.fingerprint(ctl.key), cx + 40, fy + 20 - P.line_height(self:font("head", 14)) / 2, self:font("head", 14), T.text)
+  if self:secret(ctl.key, "settings:key", cx + 28, fy, cw - 56 - 84, 40) then
+    P.text(P_.fingerprint(ctl.key), cx + 40, fy + 20 - P.line_height(self:font("head", 14)) / 2, self:font("head", 14), T.text)
+  end
   if self:button("settings:copykey", cx + cw - 28 - 76, fy + 5, 70, 30, "Copy", "secondary", { radius = 7 }) then
     P.set_clipboard(ctl.key); ctl:toast("Full key copied")
   end
-  P.text("Zuno " .. version.APP, cx + 28, cy + ch - 34, self:font("regular", 12), T.faint)
+  local by = fy + 54
+  local bw3 = (cw - 56 - 20) / 3
+  if self:button("settings:export", cx + 28, by, bw3, 40, "Back up…", "secondary") then AccountUI.open_export(self) end
+  if self:button("settings:import", cx + 28 + bw3 + 10, by, bw3, 40, "Import…", "secondary") then AccountUI.open_import(self) end
+  if self:button("settings:link", cx + 28 + 2 * (bw3 + 10), by, bw3, 40, "Link a device…", "secondary") then
+    LinkUI.open_sender(self)
+  end
+  -- lost device
+  local lf = self:font("medium", 13)
+  local q = "Lost a device or worried someone copied your key?"
+  P.text(q, cx + 28, by + 58, self:font("regular", 13), T.muted)
+  local lx = cx + 28 + P.measure(self:font("regular", 13), q) + 8
+  local rl = "Replace my key"
+  local rs = ui:hit("settings:rekey", lx, by + 54, P.measure(lf, rl), 24)
+  P.text(rl, lx, by + 58, lf, rs.hovered and T.accent_hover or T.accent)
+  if rs.clicked then
+    self.settings_open = false
+    local n = #ctl.servers
+    self:confirm("Replace your key?",
+      "You get a new identity key. Your servers move your membership, role and messages to it, and the old key stops working everywhere, " ..
+      "including on your other devices (link them again afterwards). Servers you're not connected to get the change next time you connect" ..
+      (n == 0 and "." or (". You have " .. n .. " server" .. (n == 1 and "" or "s") .. "."))
+      .. " Back up your account again afterwards.", "Replace key",
+      function() ctl:replace_key(); ctl:toast("New key made. Moving your account on your servers…") end, true)
+  end
+  if ctl.old_seed then
+    P.text(("Moving to your new key: %d server%s still to go."):format(ctl:rekey_pending_count(), ctl:rekey_pending_count() == 1 and "" or "s"),
+      cx + 28, by + 82, self:font("medium", 12), T.idle)
+  end
+  P.text("Zuno " .. version.APP, cx + 28, cy + ch - 30, self:font("regular", 12), T.faint)
 end
 
 ----------------------------------------------------------------- dialogs, menus, toasts

@@ -51,6 +51,34 @@ S["Ed25519 identity converts to a matching X25519 key pair"] = function()
   end
 end
 
+S["Argon2id RFC 9106 5.3 test vector (with secret + ad via raw call) and plain use"] = function()
+  -- Plain Argon2id round trip properties (RFC vector needs secret/ad, checked below).
+  local a = C.argon2id("password", "somesaltsomesalt", 64, 2)
+  T.eq(#a, 32)
+  T.eq(a, C.argon2id("password", "somesaltsomesalt", 64, 2), "deterministic")
+  T.ok(a ~= C.argon2id("passwore", "somesaltsomesalt", 64, 2), "password matters")
+  T.ok(a ~= C.argon2id("password", "somesaltsomesalT", 64, 2), "salt matters")
+  -- RFC 9106 Argon2id vector: password 32x01, salt 16x02, secret 8x03, ad 12x04, 32 KiB, 3 passes, 4 lanes
+  local ffi = require("ffi")
+  local lib = C.load()
+  local out = ffi.new("uint8_t[32]")
+  local area = ffi.new("uint8_t[?]", 32 * 1024)
+  local pass, salt, key, ad = string.rep("\1", 32), string.rep("\2", 16), string.rep("\3", 8), string.rep("\4", 12)
+  lib.crypto_argon2(out, 32, area, ffi.new("crypto_argon2_config", { 2, 32, 3, 4 }),
+    ffi.new("crypto_argon2_inputs", { pass, salt, 32, 16 }), ffi.new("crypto_argon2_extras", { key, ad, 8, 12 }))
+  T.eq(hex(ffi.string(out, 32)), "0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659")
+end
+
+S["seal/open round trip, tamper and wrong key fail"] = function()
+  local k = C.random(32)
+  local box = C.seal(k, "account package", "ad")
+  T.eq(C.open(k, box, "ad"), "account package")
+  T.eq(C.open(k, box, "other ad"), nil)
+  T.eq(C.open(C.random(32), box, "ad"), nil)
+  T.eq(C.open(k, box:sub(1, -2) .. string.char((box:byte(-1) + 1) % 256), "ad"), nil)
+  T.ok(C.seal(k, "x") ~= C.seal(k, "x"), "random nonce")
+end
+
 S["random bytes differ"] = function()
   T.eq(#C.random(32), 32)
   T.ok(C.random(32) ~= C.random(32))

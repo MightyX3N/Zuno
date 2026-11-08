@@ -192,6 +192,15 @@ function love.keypressed(key)
   ui:key(key, P.mods())
 end
 function love.resize() mark() end
+function love.filedropped(file)
+  mark()
+  if not app then return end
+  local name = file:getFilename():match("[^/\\]+$") or "file"
+  file:open("r")
+  local data = file:read(64 * 1024 * 1024)
+  file:close()
+  app:file_dropped(name, data or "")
+end
 function love.focus(f) mark(); if not f then P.reset_mods() end end
 
 local dark_check = 0
@@ -199,6 +208,7 @@ function love.update()
   if not ctl then return end
   ctl:update()
   poll_host()
+  P.poll_files()
   local t = love.timer.getTime()
   if t - dark_check > 15 then dark_check = t; P.set_system_dark(detect_dark()) end
 end
@@ -211,6 +221,7 @@ function love.draw()
     return
   end
   P.new_frame()
+  -- (app.modal dialogs clear focus themselves when they open, then focus their own fields)
   local modal = app.settings_open or app.dialog ~= nil or app.menu ~= nil
   if modal and not app.was_modal then P.blur_all() end
   app.was_modal = modal

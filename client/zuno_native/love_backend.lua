@@ -105,6 +105,89 @@ function P.safe_area()
   return { top = y, left = x, right = W - (x + w), bottom = H - (y + h) }
 end
 
+------------------------------------------------------------------ files
+local files = require("zuno_native.files")
+function P.save_file(name, data, label, ext, done) return files.save(name, data, label, ext, done) end
+function P.pick_file(label, ext, done) return files.pick(label, ext, done) end
+function P.file_dialog_open() return files.busy() end
+function P.poll_files() files.poll() end
+
+-- When no save dialog exists: write into the Zuno folder and return its real path.
+function P.save_fallback(name, data)
+  love.filesystem.createDirectory("exports")
+  local ok, err = love.filesystem.write("exports/" .. name, data)
+  if not ok then return nil, err end
+  return love.filesystem.getSaveDirectory() .. "/exports/" .. name
+end
+
+function P.open_folder(path)
+  path = path:gsub("\\", "/")
+  if not path:find("^/") then path = "/" .. path end
+  love.system.openURL("file://" .. path)
+end
+
+------------------------------------------------------------------ streaming / recording apps
+-- Used by streamer mode "Auto". Checked at most every 10 seconds.
+local ffi = require("ffi")
+local REC_NAMES = { ["obs64.exe"] = true, ["obs32.exe"] = true, ["obs.exe"] = true, ["obs"] = true,
+  ["streamlabs obs.exe"] = true, ["streamlabs desktop.exe"] = true, ["streamlabs"] = true, ["xsplit.core.exe"] = true }
+local rec_checked, rec_state = -100, false
+local toolhelp
+local function scan_windows()
+  if not toolhelp then
+    ffi.cdef[[
+      typedef struct { uint32_t dwSize; uint32_t cntUsage; uint32_t th32ProcessID; uintptr_t th32DefaultHeapID;
+        uint32_t th32ModuleID; uint32_t cntThreads; uint32_t th32ParentProcessID; int32_t pcPriClassBase;
+        uint32_t dwFlags; uint16_t szExeFile[260]; } ZUNO_PROCESSENTRY32W;
+      void *CreateToolhelp32Snapshot(uint32_t flags, uint32_t pid);
+      int Process32FirstW(void *snap, ZUNO_PROCESSENTRY32W *e);
+      int Process32NextW(void *snap, ZUNO_PROCESSENTRY32W *e);
+      int CloseHandle(void *h);
+    ]]
+    toolhelp = true
+  end
+  local snap = ffi.C.CreateToolhelp32Snapshot(2, 0)
+  if snap == nil or ffi.cast("intptr_t", snap) == -1 then return false end
+  local e = ffi.new("ZUNO_PROCESSENTRY32W")
+  e.dwSize = ffi.sizeof(e)
+  local found = false
+  local ok = ffi.C.Process32FirstW(snap, e)
+  while ok ~= 0 do
+    local chars = {}
+    for i = 0, 259 do
+      local c = e.szExeFile[i]
+      if c == 0 then break end
+      chars[#chars + 1] = c < 128 and string.char(c) or "?"
+    end
+    if REC_NAMES[table.concat(chars):lower()] then found = true; break end
+    ok = ffi.C.Process32NextW(snap, e)
+  end
+  ffi.C.CloseHandle(snap)
+  return found
+end
+local function scan_linux()
+  local p = io.popen("ls /proc 2>/dev/null")
+  if not p then return false end
+  local list = p:read("*a"); p:close()
+  for pid in list:gmatch("%d+") do
+    local f = io.open("/proc/" .. pid .. "/comm", "r")
+    if f then
+      local name = (f:read("*l") or ""):lower(); f:close()
+      if REC_NAMES[name] then return true end
+    end
+  end
+  return false
+end
+function P.recording_detected()
+  local t = love.timer.getTime()
+  if t - rec_checked > 10 then
+    rec_checked = t
+    local ok, res = pcall(ffi.os == "Windows" and scan_windows or (ffi.os == "Linux" and scan_linux or function() return false end))
+    rec_state = ok and res or false
+  end
+  return rec_state
+end
+
 ------------------------------------------------------------------ text fields
 local Field = {}
 Field.__index = Field
@@ -188,6 +271,7 @@ function Field:height(w)
 end
 
 function Field:get() return self.text end
+function Field:set_secret(on) self.opts.secret = on and true or nil end
 function Field:set(t)
   self.text = t or ""
   self.cursor = #self.text

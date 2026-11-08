@@ -71,6 +71,11 @@ Letting friends in
 Running two clients on one PC (for testing)
   Start the second one from a command prompt with:  set ZUNO_PROFILE=test && Zuno.exe
 
+Your account
+  Your account is a key stored on this PC (no password). In Settings you can back it
+  up to a .zunokey file with a recovery key, link another device, or replace the key
+  if a device is lost. Streamer mode hides addresses and keys while OBS is running.
+
 This is an early test build: text chat only. Voice, files and more come later.
 EOF
 sed -i 's/$/\r/' "$OUT/README.txt"

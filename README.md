@@ -23,7 +23,9 @@ Website: https://zuno.dovecross.site
 ## Status
 
 **Phase 1 works: encrypted text chat.** Servers, channels, history, editing, typing, presence,
-unread markers, hosting from the app, light and dark mode. Voice, files, layouts and mobile come next.
+unread markers, hosting from the app, light and dark mode.
+**Phase 2 in progress:** account backup files with a recovery key, linking a second device
+(QR or typed code), "Replace my key", and streamer mode work. Voice, files, layouts and mobile come next.
 See [PLAN.md](PLAN.md) for everything planned and done.
 
 ## Try it

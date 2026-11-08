@@ -70,11 +70,22 @@ function Conn:_reset_state()
   self.pending = self.pending or {}
 end
 
-function Conn:on(fn) self.listeners[#self.listeners + 1] = fn end
-function Conn:_emit(ev, a, b) for _, fn in ipairs(self.listeners) do fn(ev, a, b, self) end end
+-- Subscribe to events. Returns a function that unsubscribes.
+function Conn:on(fn)
+  self.listeners[#self.listeners + 1] = fn
+  return function()
+    for i, f in ipairs(self.listeners) do if f == fn then table.remove(self.listeners, i); return end end
+  end
+end
+function Conn:_emit(ev, a, b)
+  local list = {}
+  for i, fn in ipairs(self.listeners) do list[i] = fn end -- listeners may unsubscribe while we loop
+  for _, fn in ipairs(list) do fn(ev, a, b, self) end
+end
 
 function Conn:connect()
   if self.transport then self.transport:close() end
+  self.gen = (self.gen or 0) + 1 -- events still queued from the old connection are dropped
   self.status = "connecting"
   self.error = nil
   self.transport = self.env.transport(self.host, self.port)
@@ -140,7 +151,7 @@ function Conn:update()
 
   local st, err = t:status()
   if st == "closed" then
-    if self.status == "key_changed" or self.status == "outdated" then return end
+    if self.status == "key_changed" or self.status == "outdated" or self.status == "key_replaced" then return end
     return self:_schedule_retry(err or "connection lost")
   end
   if st == "connecting" then
@@ -150,18 +161,21 @@ function Conn:update()
 
   if not self.session then
     self.session = Session.client(self.env.crypto, {
-      identity_seed = self.env.identity_seed, name = self.env.name(), pinned_key = self.entry.key,
+      identity_seed = self.seed or self.env.identity_seed, name = self.env.name(), pinned_key = self.entry.key,
     })
     self.session:start()
     self.status = "handshake"
     self:_emit("status")
   end
 
+  local gen = self.gen
   while true do
     local data = t:receive()
     if not data then break end
-    for _, ev in ipairs(self.session:feed(data)) do self:_on_event(ev) end
-    if not self.session then return end
+    for _, ev in ipairs(self.session:feed(data)) do
+      self:_on_event(ev)
+      if self.gen ~= gen or not self.session then return end
+    end
   end
   local out = self.session and self.session:pull()
   if out then t:send(out) end
@@ -357,6 +371,23 @@ function Conn:_on_packet(p)
     if p.n and p.n > 0 then self.latency = math.max(0, math.floor(self.env.now() * 1000 - p.n)) end
     if p.n == 0 and self.ping_sent then self.latency = math.floor((self.env.now() - self.ping_sent) * 1000) end
     self:_emit("latency")
+  elseif t == "err" and p.code == "key_replaced" then
+    if self.rekeying then return end -- we replaced it ourselves; the controller reconnects
+    self.status = "key_replaced"
+    self.error = "This account's key was replaced on another device, so this device can't sign in any more. Link it again or import your account."
+    if self.transport then self.transport:close() end
+    self.session = nil
+    self:_went_offline()
+    self:_emit("status")
+  elseif t == "rekeyed" or t == "member_rekeyed" then
+    -- someone's identity (maybe ours) moved to a new key: update everything we have locally
+    local m = self.members[p.old]
+    if m then self.members[p.old] = nil; m.user = p.new; self.members[p.new] = m end
+    for _, s in pairs(self.msgs) do for _, msg in ipairs(s.list) do if msg.a == p.old then msg.a = p.new end end end
+    for _, pm in pairs(self.pending) do if pm.a == p.old then pm.a = p.new end end
+    if self.me and self.me.user == p.old then self.me.user = p.new end
+    self:_emit("members")
+    if t == "rekeyed" then self:_emit("rekeyed", p) end
   elseif t == "err" then
     if p.re and self.pending_q and self.pending_q[p.re] then
       local pm = self.pending[self.pending_q[p.re]]
@@ -365,6 +396,8 @@ function Conn:_on_packet(p)
     self:_emit("error", p.msg or p.code, p.code)
   elseif t == "notice" then
     self:_emit("notice", p.msg)
+  elseif t:sub(1, 5) == "link_" then
+    self:_emit("link", p)
   end
 end
 

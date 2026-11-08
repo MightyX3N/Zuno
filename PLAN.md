@@ -104,6 +104,8 @@ Zuno works on the free plan, but if the host has Premium, Zuno uses what it adds
 4. New device shows a **6-digit code**; the old device asks the user to **type it in**. Nothing is sent until the code matches. (A viewer who scans a streamed QR gets a different code the streamer never sees.)
 5. On approval: full account package sent end-to-end encrypted. No recovery key needed in transit.
 6. **One scan only**: QR dies on first scan. A second scan attempt cancels the link and warns "Someone else tried to use this link code". Expires after 2 minutes regardless.
+- Implementation (built): the server keeps relay sessions in memory only. The link code (session ID) is 8 Crockford base32 characters shown as `XXXX-XXXX`. The new device connects as a **guest** (handshake flag; guests may only ping and use the link packets, and are dropped after 3 minutes). Both sides swap ephemeral X25519 keys A and B; `k = BLAKE2b(shared‖A‖B‖sid)`, the account is sealed with a key derived from k, and the 6-digit code is derived from k too, so a relay that swaps keys produces two different codes. With the QR the new device also knows A and checks it. Three wrong codes cancel the link.
+- Link payload: `https://zuno.dovecross.site/link#1.<base64url(msgpack {s = server address, i = link code, k = A})>`. The desktop app shows the QR and the same address + code as text; scanning a QR inside the app waits for a camera (Android, Phase 5).
 
 ### 5.1.1 Reverse link: the new device shows the QR (TV, desktop without camera)
 A TV has no camera and typing with a remote is painful, so the **new device shows the QR and the phone scans it** (same idea as signing into Netflix/YouTube on a TV).
@@ -119,17 +121,21 @@ A TV has no camera and typing with a remote is painful, so the **new device show
 
 ### 5.2 Backup / transfer file
 - Settings → "Export account" → `<name>.zunokey` file (same contents as the QR package).
-- Encrypted with a generated **recovery key** (e.g. `K7QM-9XTD-4HPA-W2RE-8NVC`), shown once, with Copy / Save / Print. Key derived with Argon2id, data sealed with XChaCha20-Poly1305.
+- Encrypted with a generated **recovery key**: 25 Crockford base32 characters in groups of 5 (e.g. `K7QM9-XTD4H-PAW2R-E8NVC-3J6TK`, ~125 bits; typing is forgiving about case, spaces, O/0 and I/L/1), shown once, with Copy. Key derived with Argon2id (64 MiB, 3 passes, stored in the file header so they can be raised later), data sealed with XChaCha20-Poly1305 with the header as associated data.
+- File format: `ZUNOKEY\1` | u32 KiB | u8 passes | 16-byte salt | sealed box.
+- Desktop uses the system Save / Open dialogs (Windows: comdlg32; Linux: zenity or kdialog, run on a background thread so the app keeps answering the window system). Without a dialog the file goes to the app's save folder, and import also accepts a dropped file.
 - "Import account" = pick file + enter recovery key.
 - UI must state clearly: lose both file and key and the account is gone (no reset possible).
 
 ### 5.3 Lost / stolen device
 - "Replace my key": a remaining device generates a new master key, signs a hand-over with the old key, pushes it to all the user's servers; servers then accept only the new key.
-- First valid hand-over wins; disputes resolved by the server owner (owner tools needed).
+- First valid hand-over wins; disputes resolved by the server owner (owner tools needed, Phase 3).
+- Implementation (built): the signature covers `zuno-rekey-v1:<server key>:<new key>`, so it can't be replayed on another server. The server moves membership, role and message authorship to the new key and keeps the old key in `retired_keys`; a retired key is refused with `key_replaced`, and its open connections are dropped. The client keeps the old key (`identity.old`) until every server in the list has accepted the hand-over, and finishes offline servers when they come back.
 
 ### 5.4 Streamer mode
 - Blurs link QR, recovery key, server addresses and other sensitive details; click-and-hold to reveal; Copy buttons so secrets never need to be on screen.
 - Auto-enables on desktop when OBS / Streamlabs is running; manual toggle everywhere.
+- Setting is Off / Auto / On (default Auto). Detection: process list (Toolhelp32 on Windows, `/proc/*/comm` on Linux), checked every few seconds.
 
 ### 5.5 Direct file sharing
 
@@ -313,15 +319,15 @@ tests/      test runner + suites (LuaJIT, and Lua 5.4 for the shared code)
 - [x] Windows test build: `Zuno.exe` + `Zuno Server.exe` (`scripts/package-windows.sh`)
 
 ### Phase 2: Accounts across devices + core features
-- [ ] Export / import `.zunokey` file with recovery key (Argon2id + XChaCha20-Poly1305)
-- [ ] QR device linking (temporary key, relay through a server, typed 6-digit code, one-scan, 2-min expiry, warning on second scan)
+- [x] Export / import `.zunokey` file with recovery key (Argon2id + XChaCha20-Poly1305)
+- [x] QR device linking (temporary key, relay through a server, typed 6-digit code, one-scan, 2-min expiry, warning on second scan)
 - [ ] Reverse link (5.1.1): new device shows QR, phone scans, direct LAN connection, typed 6-digit code
 - [ ] Reverse link fallback through one server invite when LAN fails
 - [ ] "Also join on my other devices" when opening an invite
-- [ ] Fallback typed link code for devices without a camera
-- [ ] `web/link/` handler page
-- [ ] Streamer mode (blur + reveal, Copy buttons, OBS/Streamlabs auto-detect on desktop)
-- [ ] "Replace my key" hand-over + server-owner dispute tools
+- [x] Fallback typed link code for devices without a camera
+- [x] `web/link/` handler page
+- [x] Streamer mode (blur + reveal, Copy buttons, OBS/Streamlabs auto-detect on desktop)
+- [x] "Replace my key" hand-over (server-owner dispute tools: Phase 3)
 - [ ] Markdown, mentions, replies, reactions, custom emoji
 - [ ] File and image uploads (chunked over TCP), avatars
 - [ ] Notifications while the app is running
@@ -337,6 +343,7 @@ tests/      test runner + suites (LuaJIT, and Lua 5.4 for the shared code)
 - [ ] Channel categories
 - [ ] Roles + permission bitflags, per-channel overrides
 - [ ] Kick / ban by identity key
+- [ ] Key hand-over disputes: owner sees replaced keys and can undo a hand-over (5.3)
 - [ ] Invite addresses, optional server password
 - [ ] Server settings editable from the client (owner key)
 - [ ] Optional playit Proxy Protocol support (real client IPs)

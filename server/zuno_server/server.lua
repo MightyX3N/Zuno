@@ -16,6 +16,7 @@ local Store = require("zuno_server.store")
 local Config = require("zuno_server.config")
 local fs = require("zuno_server.fs")
 
+local mp = require("zuno.msgpack")
 local Server = {}
 Server.__index = Server
 
@@ -78,6 +79,7 @@ function Server.new(opts)
     self.store:set_meta("claim_code", new_claim_code())
   end
 
+  self.links = {}        -- sid -> device link relay session
   self.conns = {}        -- socket -> conn
   self.online = {}       -- user key -> { [conn] = true }
   self.handshaking = 0
@@ -93,7 +95,14 @@ function Server:claim_code() return self.store:meta("claim_code") end
 function Server:start()
   local c = self.config
   local listener, err = socket.bind(c.bind, c.port)
-  if not listener then error("could not listen on port " .. c.port .. ": " .. tostring(err), 0) end
+  if not listener then
+    err = tostring(err)
+    -- Windows reports a port taken by another program as "permission denied".
+    if err:find("in use") or (err:find("permission") and c.port >= 1024) then
+      error(("Port %d is busy (another server?). Try another."):format(c.port), 0)
+    end
+    error("Could not listen on port " .. c.port .. ": " .. err, 0)
+  end
   listener:settimeout(0)
   self.listener = listener
   local _, port = listener:getsockname()
@@ -171,9 +180,10 @@ function Server:_drop(conn, why)
   if #conn.out > 0 then conn.sock:send(table.concat(conn.out)) end
   conn.sock:close()
   self.conns[conn.sock] = nil
-  if not conn.user then
+  if conn.link then self:_close_link(conn.link, conn, "closed") end
+  if not conn.ready then
     self.handshaking = self.handshaking - 1
-  else
+  elseif conn.user then
     local set = self.online[conn.user]
     if set then
       set[conn] = nil
@@ -184,6 +194,7 @@ function Server:_drop(conn, why)
       end
     end
   end
+  if conn.retired then return end
   if why and conn.user then self:log("info", ("%s disconnected (%s)"):format(conn.user:sub(1, 8), why)) end
 end
 
@@ -195,7 +206,20 @@ end
 
 function Server:_on_ready(conn, ev)
   self.handshaking = self.handshaking - 1
+  conn.ready = true
+  if ev.guest then
+    -- A device being linked: not a member, may only use the link relay.
+    conn.guest = true
+    return
+  end
   local key = ev.peer_key
+  if self.store:retired(key) then
+    -- This key was replaced ("Replace my key"). Tell the device and close.
+    conn.ready, conn.retired = true, true
+    self:send(conn, { t = "err", code = "key_replaced", msg = "this account's key was replaced on another device" })
+    self:_drop(conn, nil)
+    return
+  end
   local name = ev.peer_name
   if not (name and P.check_field("name", name)) then name = "user-" .. key:sub(1, 6) end
   local member, is_new = self.store:upsert_member(key, name, now_ms())
@@ -260,9 +284,11 @@ end
 function Server:_timeouts()
   local t, c = socket.gettime(), self.config
   for _, conn in pairs(self.conns) do
-    if not conn.user and t - conn.opened > c.handshake_timeout then
+    if not conn.ready and t - conn.opened > c.handshake_timeout then
       self:_drop(conn, "handshake timeout")
-    elseif conn.user and t - conn.last_recv > c.idle_timeout then
+    elseif conn.guest and t - conn.opened > 180 then
+      self:_drop(conn, "link guest timeout")
+    elseif conn.ready and t - conn.last_recv > c.idle_timeout then
       self:_drop(conn, "idle timeout")
     end
   end
@@ -289,6 +315,9 @@ function Server:step(timeout)
   if not self.last_timeout_check or t - self.last_timeout_check > 1 then
     self.last_timeout_check = t
     self:_timeouts()
+    for _, link in pairs(self.links) do
+      if t > link.expires then self:_close_link(link, nil, "expired") end
+    end
   end
 end
 
@@ -459,6 +488,94 @@ function H.channel_delete(self, conn, pkt)
   self:broadcast({ t = "channel_removed", ch = ch.id })
 end
 
+--------------------------------------------------------------------- device linking relay
+local LINK_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+local function new_sid()
+  local r, out = C.random(8), {}
+  for i = 1, 8 do
+    local b = r:byte(i) % 32 + 1
+    out[#out + 1] = LINK_ALPHABET:sub(b, b)
+    if i == 4 then out[#out + 1] = "-" end
+  end
+  return table.concat(out)
+end
+
+function Server:_close_link(link, by, why)
+  if self.links[link.sid] ~= link then return end
+  self.links[link.sid] = nil
+  for _, c in ipairs({ link.owner, link.joiner }) do
+    if c then
+      c.link = nil
+      if c ~= by and not c.closed then self:send(c, { t = "link_event", sid = link.sid, ev = why or "closed" }) end
+    end
+  end
+end
+
+function H.link_open(self, conn, pkt)
+  if not take(conn.claims) then return self:_err(conn, pkt, P.ERR.rate_limited, "wait a moment before trying again") end
+  if conn.link then self:_close_link(conn.link, conn, "closed") end
+  local sid = new_sid()
+  local link = { sid = sid, owner = conn, expires = socket.gettime() + 120 }
+  self.links[sid] = link
+  conn.link = link
+  self:send(conn, { t = "link_opened", sid = sid, expires_in = 120, re = pkt.q })
+end
+
+function H.link_join(self, conn, pkt)
+  if not take(conn.claims) then return self:_err(conn, pkt, P.ERR.rate_limited, "too many attempts, wait a minute") end
+  local sid = pkt.sid:upper():gsub("[^0-9A-Z]", "")
+  sid = sid:sub(1, 4) .. "-" .. sid:sub(5, 8)
+  local link = self.links[sid]
+  if not link or link.owner == conn then return self:_err(conn, pkt, P.ERR.not_found, "that link code isn't valid any more") end
+  if link.joiner then
+    -- One scan only: a second attempt cancels the link and warns the owner.
+    self:_close_link(link, conn, "second_scan")
+    return self:_err(conn, pkt, P.ERR.forbidden, "that link code was already used")
+  end
+  link.joiner = conn
+  conn.link = link
+  self:send(link.owner, { t = "link_event", sid = sid, ev = "joined" })
+  self:send(conn, { t = "link_joined", sid = sid, re = pkt.q })
+end
+
+function H.link_data(self, conn, pkt)
+  local link = conn.link
+  if not link or link.sid ~= pkt.sid or not link.joiner then return self:_err(conn, pkt, P.ERR.not_found, "no such link") end
+  local peer = (link.owner == conn) and link.joiner or link.owner
+  self:send(peer, { t = "link_data", sid = link.sid, d = mp.bin(pkt.d) })
+end
+
+function H.rekey(self, conn, pkt)
+  if not take(conn.claims) then return self:_err(conn, pkt, P.ERR.rate_limited, "too many attempts, wait a minute") end
+  local old = conn.user
+  if pkt.new == old then return self:_err(conn, pkt, P.ERR.invalid, "that's the same key") end
+  local msg = P.rekey_message(self.key, pkt.new)
+  if not C.ed25519_verify(pkt.sig, compat.unhex(old), msg) then
+    return self:_err(conn, pkt, P.ERR.forbidden, "the hand-over signature is wrong")
+  end
+  if self.store:member(pkt.new) or self.store:retired(pkt.new) then
+    return self:_err(conn, pkt, P.ERR.exists, "that new key is already used on this server")
+  end
+  self.store:replace_key(old, pkt.new, now_ms())
+  local m = self.store:member(pkt.new)
+  self:log("info", ("%s replaced their key: %s -> %s"):format(m.name, old:sub(1, 8), pkt.new:sub(1, 8)))
+  self:send(conn, { t = "rekeyed", old = old, new = pkt.new, re = pkt.q })
+  -- everyone else: the member's identity moved
+  self:broadcast({ t = "member_rekeyed", old = old, new = pkt.new }, conn)
+  -- every connection still using the old key is closed (including this one)
+  for _, c in pairs(self.conns) do
+    if c.user == old then
+      self:send(c, { t = "err", code = "key_replaced", msg = "this account's key was replaced" })
+      self:_drop(c, "key replaced")
+    end
+  end
+end
+
+function H.link_close(self, conn, pkt)
+  local link = conn.link
+  if link and link.sid == pkt.sid then self:_close_link(link, conn, "closed") end
+end
+
 function Server:_handle(conn, pkt)
   if not take(conn.general) then
     -- Way over the limit: a misbehaving client. Drop it.
@@ -466,6 +583,9 @@ function Server:_handle(conn, pkt)
   end
   local ok, why = P.validate_client(pkt)
   if not ok then return self:_err(conn, pkt, P.ERR.bad_packet, why) end
+  if conn.guest and not P.GUEST_ALLOWED[pkt.t] then
+    return self:_err(conn, pkt, P.ERR.forbidden, "join the server first")
+  end
   local fn = H[pkt.t]
   local success, err = pcall(fn, self, conn, pkt)
   if not success then

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Link a device · Zuno</title>
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#fbfaf7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#17191e" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="../assets/icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/site.css">
+  <script src="../assets/theme.js"></script>
+  <style>
+    .linkcard { width: 100%; max-width: 480px; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 32px; display: grid; gap: 16px; }
+    .linkcard h1 { font-size: 28px; }
+    .linkcard p { margin: 0; color: var(--muted); }
+    .kv { display: grid; gap: 4px; }
+    .kv span { font-size: 13px; font-weight: 600; }
+    .kv code { font: 600 20px var(--font-head); background: var(--ground); padding: 10px 14px; border-radius: 10px; word-break: break-all; }
+    .kv code.big { font-size: 30px; letter-spacing: 0.04em; }
+    ol { margin: 0; padding-left: 20px; color: var(--muted); display: grid; gap: 6px; }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <main class="app-body">
+      <div class="linkcard" id="card">
+        <h1>Link a device</h1>
+        <p id="intro">This link connects another device to a Zuno account. Nothing has been sent: the link only says where to meet.</p>
+        <div id="details" hidden>
+          <ol>
+            <li>Open Zuno on the device you want to link.</li>
+            <li>Choose <strong>Link this device</strong> (on the welcome screen).</li>
+            <li>Type these, or paste this page's whole address into the first box:</li>
+          </ol>
+          <div class="kv" style="margin-top:14px"><span>Server address</span><code id="server"></code></div>
+          <div class="kv" style="margin-top:10px"><span>Link code</span><code class="big" id="code"></code></div>
+          <p style="margin-top:14px">The code works once and expires two minutes after it was shown. Your new device will then show a 6-digit code to type on the other one.</p>
+        </div>
+        <p class="notice" id="bad" hidden>This link is incomplete or damaged. Show a new code on your other device and try again.</p>
+        <p class="hint">Linking right here in the browser arrives with the web client. <a href="../">About Zuno</a></p>
+      </div>
+    </main>
+  </div>
+  <script>
+    // The part after # never reaches the web server. Format: 1.<base64url(msgpack {s, i, k})>
+    (function () {
+      function b64(s) {
+        s = s.replace(/-/g, "+").replace(/_/g, "/");
+        while (s.length % 4) s += "=";
+        var bin = atob(s), out = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+      }
+      // Just enough MessagePack for a small map of strings and binary.
+      function decode(b) {
+        var p = 0;
+        function str(n) { var s = new TextDecoder().decode(b.slice(p, p + n)); p += n; return s; }
+        function val() {
+          var c = b[p++];
+          if (c >= 0xa0 && c <= 0xbf) return str(c - 0xa0);
+          if (c === 0xd9) return str(b[p++]);
+          if (c === 0xc4) { var n = b[p++]; var v = b.slice(p, p + n); p += n; return v; }
+          if (c >= 0x80 && c <= 0x8f) { var m = {}; for (var i = 0; i < c - 0x80; i++) { var k = val(); m[k] = val(); } return m; }
+          throw new Error("unsupported");
+        }
+        return val();
+      }
+      try {
+        var frag = decodeURIComponent(location.hash.slice(1));
+        if (!frag) return;
+        var m = frag.match(/^1\.([A-Za-z0-9_-]+)$/);
+        var t = decode(b64(m[1]));
+        if (typeof t.s !== "string" || typeof t.i !== "string") throw new Error("bad");
+        document.getElementById("server").textContent = t.s;
+        document.getElementById("code").textContent = t.i;
+        document.getElementById("details").hidden = false;
+      } catch (e) {
+        document.getElementById("bad").hidden = false;
+      }
+    })();
+  </script>
+</body>
+</html>

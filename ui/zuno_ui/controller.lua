@@ -6,12 +6,14 @@ local mp = require("zuno.msgpack")
 local compat = require("zuno.compat")
 local P = require("zuno.packets")
 local model = require("zuno_ui.model")
+local Account = require("zuno_ui.account")
 
 local Controller = {}
 Controller.__index = Controller
 
 local DATA_FILE = "client.dat"
 local KEY_FILE = "identity.key"
+local OLD_KEY_FILE = "identity.old" -- kept until every server got the "replace my key" hand-over
 
 function Controller.new(env)
   local self = setmetatable({ env = env, conns = {}, toasts = {} }, Controller)
@@ -29,6 +31,8 @@ function Controller:_load()
   end
   self.seed = seed
   self.key = compat.hex(env.crypto.ed25519_public(seed))
+  local old = env.storage.read(OLD_KEY_FILE)
+  if old and #old == 32 then self.old_seed = old end
 
   local data = {}
   local raw = env.storage.read(DATA_FILE)
@@ -39,11 +43,13 @@ function Controller:_load()
     host_port = compat.is_int(data.host_port) and data.host_port or 41234,
     host_name = type(data.host_name) == "string" and data.host_name or nil,
     hosting = data.hosting == true, -- restart the hosted server on launch
+    streamer = (data.streamer == "on" or data.streamer == "off") and data.streamer or "auto",
   }
   self.servers = {}
   for _, e in ipairs(type(data.servers) == "table" and data.servers or {}) do
     if type(e) == "table" and type(e.address) == "string" and model.parse_address(e.address) then
-      self.servers[#self.servers + 1] = { address = e.address, key = e.key, name = e.name, last_ch = e.last_ch, hosted = e.hosted }
+      self.servers[#self.servers + 1] = { address = e.address, key = e.key, name = e.name, last_ch = e.last_ch,
+        hosted = e.hosted, rekey_pending = e.rekey_pending and self.old_seed and true or nil }
     end
   end
   self.active = compat.is_int(data.active) and data.active or 1
@@ -54,12 +60,50 @@ end
 function Controller:save()
   local list = {}
   for _, e in ipairs(self.servers) do
-    list[#list + 1] = { address = e.address, key = e.key, name = e.name, last_ch = e.last_ch, hosted = e.hosted }
+    list[#list + 1] = { address = e.address, key = e.key, name = e.name, last_ch = e.last_ch, hosted = e.hosted,
+      rekey_pending = e.rekey_pending }
   end
   self.env.storage.write(DATA_FILE, mp.encode({
     name = self.settings.name, theme = self.settings.theme, host_port = self.settings.host_port,
-    host_name = self.settings.host_name, hosting = self.settings.hosting or nil, servers = list, active = self.active,
+    host_name = self.settings.host_name, hosting = self.settings.hosting or nil, streamer = self.settings.streamer, servers = list, active = self.active,
   }))
+end
+
+------------------------------------------------------------------ account backup / restore
+function Controller:account()
+  return { seed = self.seed, name = self.settings.name, theme = self.settings.theme, servers = self.servers }
+end
+
+function Controller:new_recovery_key() return Account.new_recovery_key(self.env.crypto) end
+
+-- Slow on purpose (Argon2id, 64 MiB): call from a "working..." state.
+function Controller:export_account(recovery_key)
+  return Account.export_file(self.env.crypto, self:account(), recovery_key)
+end
+
+function Controller:read_account_file(bytes, recovery_input)
+  return Account.import_file(self.env.crypto, bytes, recovery_input)
+end
+
+-- Replace this device's account with `acc` (from a file or a linked device).
+function Controller:replace_account(acc)
+  for _, c in pairs(self.conns) do c:disconnect(true) end
+  self.conns = {}
+  self.seed = acc.seed
+  self.env.storage.write(KEY_FILE, acc.seed)
+  self.key = compat.hex(self.env.crypto.ed25519_public(acc.seed))
+  self.settings.name = acc.name or self.settings.name
+  if acc.theme == "light" or acc.theme == "dark" or acc.theme == "system" then self.settings.theme = acc.theme end
+  self.settings.hosting = false
+  self.servers = {}
+  for _, e in ipairs(acc.servers or {}) do
+    if model.parse_address(e.address) then
+      self.servers[#self.servers + 1] = { address = e.address, key = e.key, name = e.name }
+    end
+  end
+  for _, e in ipairs(self.servers) do self:_open(e) end
+  self.active = #self.servers > 0 and 1 or 0
+  self:save()
 end
 
 function Controller:display_name()
@@ -72,8 +116,13 @@ function Controller:_open(entry)
     crypto = env.crypto, transport = env.transport, now = env.now, identity_seed = self.seed,
     name = function() return self:display_name() end,
   }, entry)
+  if entry.rekey_pending and self.old_seed then conn.seed = self.old_seed; conn.rekeying = true end
   conn:on(function(ev, a, b)
-    if ev == "entry" then self:save()
+    if ev == "status" and conn.status == "online" and entry.rekey_pending then self:_send_rekey(entry, conn)
+    elseif ev == "rekeyed" then self:_rekey_done(entry, conn)
+    elseif ev == "error" and entry.rekey_pending and conn.rekey_sent and (b == "exists" or b == "forbidden") then
+      self:_rekey_failed(entry, conn, a)
+    elseif ev == "entry" then self:save()
     elseif ev == "error" then self:toast(a, "error", entry)
     elseif ev == "notice" then self:toast(a, "info", entry)
     end
@@ -107,6 +156,7 @@ end
 function Controller:remove_server(i)
   local e = self.servers[i]
   if not e then return end
+  e.rekey_pending = nil
   local c = self.conns[e]
   if c then c:disconnect(true) end
   self.conns[e] = nil
@@ -114,6 +164,7 @@ function Controller:remove_server(i)
   if self.active > #self.servers then self.active = #self.servers end
   if self.active == 0 and #self.servers > 0 then self.active = 1 end
   self:save()
+  self:_maybe_finish_rekey()
 end
 
 function Controller:select(i)
@@ -132,6 +183,7 @@ function Controller:set_name(name)
 end
 
 function Controller:set_theme(t) self.settings.theme = t; self:save() end
+function Controller:set_streamer(s) self.settings.streamer = s; self:save() end
 
 function Controller:remember_channel(entry, ch)
   if entry.last_ch ~= ch then entry.last_ch = ch; self:save() end
@@ -147,6 +199,70 @@ function Controller:update()
   for _, c in pairs(self.conns) do c:update() end
   local now = self.env.now()
   for i = #self.toasts, 1, -1 do if now - self.toasts[i].at > 5 then table.remove(self.toasts, i) end end
+end
+
+------------------------------------------------------------------ replace my key (5.3)
+-- A new identity key replaces the current one. Each server gets a hand-over signed by the
+-- old key; servers that are offline get it on their next connect, so the old key is kept
+-- (identity.old) until every server has it.
+function Controller:replace_key()
+  local C = self.env.crypto
+  local old = self.old_seed or self.seed
+  local new = C.ed25519_new_seed()
+  self.env.storage.write(OLD_KEY_FILE, old)
+  self.env.storage.write(KEY_FILE, new)
+  self.old_seed, self.seed = old, new
+  self.key = compat.hex(C.ed25519_public(new))
+  for _, e in ipairs(self.servers) do
+    e.rekey_pending = true
+    e.rekey_failed = nil
+    local c = self.conns[e]
+    c.seed, c.rekeying = old, true
+    if c.status == "online" then self:_send_rekey(e, c) end
+  end
+  self:save()
+  self:_maybe_finish_rekey()
+end
+
+function Controller:_send_rekey(entry, conn)
+  local C = self.env.crypto
+  if not conn.server or not conn.server.key then return end
+  local sig = C.ed25519_sign(self.old_seed, P.rekey_message(conn.server.key, self.key))
+  conn.rekey_sent = true
+  conn:send({ t = "rekey", new = self.key, sig = mp.bin(sig) })
+end
+
+function Controller:_rekey_done(entry, conn)
+  entry.rekey_pending = nil
+  conn.rekeying, conn.rekey_sent = nil, nil
+  conn.seed = self.seed
+  self:save()
+  -- Drop the old-key connection now (the server is about to close it) and come back with the new key.
+  conn.attempt, conn.next_try = 0, 0
+  conn:connect()
+  self:_maybe_finish_rekey()
+end
+
+function Controller:_rekey_failed(entry, conn, msg)
+  entry.rekey_pending, entry.rekey_failed = nil, true
+  conn.rekeying, conn.rekey_sent = nil, nil
+  self:toast(("Couldn't move your account on %s: %s"):format(entry.name or entry.address, tostring(msg)), "error")
+  self:save()
+  self:_maybe_finish_rekey()
+end
+
+function Controller:rekey_pending_count()
+  local n = 0
+  for _, e in ipairs(self.servers) do if e.rekey_pending then n = n + 1 end end
+  return n
+end
+
+function Controller:_maybe_finish_rekey()
+  if self.old_seed and self:rekey_pending_count() == 0 then
+    self.old_seed = nil
+    self.env.storage.write(OLD_KEY_FILE, "")
+    self:toast("Your key was replaced on all your servers. Link your other devices again.")
+  end
 end
 
 ------------------------------------------------------------------ hosting

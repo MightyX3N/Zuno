@@ -44,6 +44,7 @@ Real editable text fields are owned by the backend (in the browser they are `<in
 | `f:draw()` | Draw it (LÖVE); no-op in the browser |
 | `f:get()` / `f:set(text)` | Read / replace the text |
 | `f:focus()` / `f:blur()` / `f:focused()` | Keyboard focus |
+| `f:set_secret(on)` | Show dots instead of the text (streamer mode, passwords) |
 | `f.on_submit`, `f.on_key`, `f.on_change` | Callbacks set by the UI |
 
 ## Everything else
@@ -57,3 +58,10 @@ Real editable text fields are owned by the backend (in the browser they are `<in
 | `P.open_url(url)` | Open a link (the UI asks the user first) |
 | `P.device()` | `{ form = "desktop" \| "phone" \| "tablet" \| "tv", input = "mouse" \| "touch" \| "remote", dark = bool \| nil }` |
 | `P.safe_area()` | Insets `{top, right, bottom, left}` for notches, keyboards and TV overscan |
+| `P.save_file(name, data, label, ext, done)` | System "Save as" dialog. Later calls `done(path)` or `done(nil, "cancelled" \| "unavailable" \| error)` |
+| `P.pick_file(label, ext, done)` | System "Open" dialog. Later calls `done(data, path)` or `done(nil, reason)` |
+| `P.save_fallback(name, data)` | Save into Zuno's own folder when there's no dialog. Returns the path |
+| `P.open_folder(path)` | Show a folder in the file manager |
+| `P.recording_detected()` | True while OBS / Streamlabs runs (streamer mode "Auto"); optional |
+
+Dropped files reach the UI through `app:file_dropped(name, data)`.

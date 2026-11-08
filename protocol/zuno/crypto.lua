@@ -24,6 +24,11 @@ void crypto_sha512(uint8_t hash[64], const uint8_t *message, size_t message_size
 void crypto_ed25519_key_pair(uint8_t secret_key[64], uint8_t public_key[32], uint8_t seed[32]);
 void crypto_ed25519_sign(uint8_t signature[64], const uint8_t secret_key[64], const uint8_t *message, size_t message_size);
 int  crypto_ed25519_check(const uint8_t signature[64], const uint8_t public_key[32], const uint8_t *message, size_t message_size);
+typedef struct { uint32_t algorithm; uint32_t nb_blocks; uint32_t nb_passes; uint32_t nb_lanes; } crypto_argon2_config;
+typedef struct { const uint8_t *pass; const uint8_t *salt; uint32_t pass_size; uint32_t salt_size; } crypto_argon2_inputs;
+typedef struct { const uint8_t *key; const uint8_t *ad; uint32_t key_size; uint32_t ad_size; } crypto_argon2_extras;
+void crypto_argon2(uint8_t *hash, uint32_t hash_size, void *work_area, crypto_argon2_config config,
+                   crypto_argon2_inputs inputs, crypto_argon2_extras extras);
 ]]
 
 local M = {}
@@ -184,6 +189,42 @@ function M.aead_decrypt(key, nonce, ad, data)
   L().crypto_wipe(ctx, ffi.sizeof(ctx))
   if not ok then return nil end
   return str(pt, n)
+end
+
+-- XChaCha20-Poly1305 with a random 24-byte nonce. Returns nonce .. mac .. ciphertext.
+function M.seal(key, plaintext, ad)
+  check_len(key, 32, "seal key")
+  ad = ad or ""
+  local nonce = M.random(24)
+  local n = #plaintext
+  local ct, mac = u8(n > 0 and n or 1), u8(16)
+  L().crypto_aead_lock(ct, mac, key, nonce, ad, #ad, plaintext, n)
+  return nonce .. str(mac, 16) .. str(ct, n)
+end
+
+-- Opens what seal() made. Returns plaintext or nil.
+function M.open(key, data, ad)
+  check_len(key, 32, "open key")
+  ad = ad or ""
+  if type(data) ~= "string" or #data < 40 then return nil end
+  local nonce, mac, ct = data:sub(1, 24), data:sub(25, 40), data:sub(41)
+  local n = #ct
+  local pt = u8(n > 0 and n or 1)
+  if L().crypto_aead_unlock(pt, mac, key, nonce, ad, #ad, ct, n) ~= 0 then return nil end
+  return str(pt, n)
+end
+
+-- Argon2id. kib = memory in KiB (>= 8), passes >= 1. Returns `size` bytes.
+function M.argon2id(password, salt, kib, passes, size)
+  size = size or 32
+  local area = ffi.new("uint8_t[?]", kib * 1024)
+  local out = u8(size)
+  local cfg = ffi.new("crypto_argon2_config", { 2, kib, passes, 1 })
+  local inp = ffi.new("crypto_argon2_inputs", { password, salt, #password, #salt })
+  local ext = ffi.new("crypto_argon2_extras", { nil, nil, 0, 0 })
+  L().crypto_argon2(out, size, area, cfg, inp, ext)
+  L().crypto_wipe(area, kib * 1024)
+  return str(out, size)
 end
 
 -- Constant-time comparison of two strings of equal length.

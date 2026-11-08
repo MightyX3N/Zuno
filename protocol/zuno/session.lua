@@ -109,7 +109,7 @@ function Session:_handshake_frame(body, events)
       self.state = "ready"
       self.decoder:set_max(frame.MAX)
       self.peer_key = data.key
-      events[#events + 1] = { type = "ready", peer_key = data.key,
+      events[#events + 1] = { type = "ready", peer_key = data.key, guest = data.guest == true,
         peer_name = type(data.name) == "string" and data.name or nil, version = self.version }
     end
   else -- client got message 2
@@ -124,7 +124,7 @@ function Session:_handshake_frame(body, events)
         { new_key = data.key, old_key = self.opts.pinned_key, server_name = data.name })
     end
     self.version = data.v
-    self:_emit(hs:write(mp.encode({ key = self.my_key, name = self.opts.name })))
+    self:_emit(hs:write(mp.encode({ key = self.my_key, name = self.opts.name, guest = self.opts.guest or nil })))
     self.send_cs, self.recv_cs, self.hash = hs:split()
     self.state = "ready"
     self.peer_key = data.key

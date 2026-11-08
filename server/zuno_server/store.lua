@@ -34,6 +34,11 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS messages_ch_id ON messages (ch, id);
 CREATE INDEX IF NOT EXISTS messages_ch_rev ON messages (ch, rev);
+CREATE TABLE IF NOT EXISTS retired_keys (
+  key TEXT PRIMARY KEY,           -- an identity key that was replaced
+  replaced_by TEXT NOT NULL,
+  at INTEGER NOT NULL
+);
 ]]
 
 function Store.open(path)
@@ -86,6 +91,18 @@ end
 function Store:set_member_name(key, name) self.db:run("UPDATE members SET name = ? WHERE key = ?", name, key) end
 function Store:set_member_role(key, role) self.db:run("UPDATE members SET role = ? WHERE key = ?", role, key) end
 function Store:touch_member(key, now) self.db:run("UPDATE members SET last_seen = ? WHERE key = ?", now, key) end
+
+function Store:retired(key) return self.db:one("SELECT * FROM retired_keys WHERE key = ?", key) end
+
+-- Move a member to a new key: membership, role and authorship. The old key is retired.
+function Store:replace_key(old, new, now)
+  self.db:transaction(function()
+    self.db:run("UPDATE members SET key = ? WHERE key = ?", new, old)
+    self.db:run("UPDATE messages SET author = ? WHERE author = ?", new, old)
+    self.db:run("UPDATE retired_keys SET replaced_by = ? WHERE replaced_by = ?", new, old)
+    self.db:run("INSERT INTO retired_keys (key, replaced_by, at) VALUES (?, ?, ?)", old, new, now)
+  end)
+end
 
 function Store:owner()
   return self.db:one("SELECT * FROM members WHERE role = 'owner' LIMIT 1")
