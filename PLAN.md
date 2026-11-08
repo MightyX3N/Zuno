@@ -181,7 +181,7 @@ Keys are free to make, so anyone can create endless identities. Servers need gat
 - Servers can ship a pack; clients download on connect and cache by hash.
 - User controls: "Use server layouts" toggle + per-server override. Missing mobile variant → default mobile layout.
 - Built-in packs (from the design canvas): **tabs** (default), **terminal**, **messenger** (early-2000s IM look, no MSN branding), **deck** (multi-column).
-- Design previews: https://claude.ai/artifact/M3y1Py8gQWnN5JgjRQknHi (private to the owner)
+- Design previews: [`docs/design/layouts.html`](docs/design/layouts.html) (exported design canvas with all four layouts; open it in a browser)
 
 ### 6.2 Addons (features, not just theming)
 
