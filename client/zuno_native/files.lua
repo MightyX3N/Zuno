@@ -92,7 +92,8 @@ end
 ------------------------------------------------------------------ Windows dialogs
 local function win_dialog(save, default_name, label, ext)  comdlg = comdlg or ffi.load("comdlg32")
   user32 = user32 or ffi.load("user32")
-  local filter_str = ("%s (*.%s)\0*.%s\0All files (*.*)\0*.*\0\0"):format(label, ext, ext)
+  -- ext nil = any file
+  local filter_str = ext and ("%s (*.%s)\0*.%s\0All files (*.*)\0*.*\0\0"):format(label, ext, ext) or "All files (*.*)\0*.*\0\0"
   local filter = wide(filter_str)
   local fbuf = ffi.new("uint16_t[1024]")
   if default_name then
@@ -106,7 +107,7 @@ local function win_dialog(save, default_name, label, ext)  comdlg = comdlg or ff
   ofn.nFilterIndex = 1
   ofn.lpstrFile = fbuf
   ofn.nMaxFile = 1024
-  local defext = wide(ext)
+  local defext = ext and wide(ext)
   ofn.lpstrDefExt = defext
   -- OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST | (save: OVERWRITEPROMPT, open: FILEMUSTEXIST)
   ofn.Flags = 0x80000 + 0x8 + 0x800 + (save and 0x2 or 0x1000)
@@ -139,10 +140,10 @@ local function linux_command(save, default_name, label, ext)
   local cmd
   if has("zenity") then
     cmd = "zenity --file-selection" .. (save and (" --save --confirm-overwrite --filename=" .. sh_quote(default_name or "")) or "")
-      .. " --file-filter=" .. sh_quote(label .. " | *." .. ext) .. " --file-filter='All files | *' 2>/dev/null"
+      .. (ext and (" --file-filter=" .. sh_quote(label .. " | *." .. ext)) or "") .. " --file-filter='All files | *' 2>/dev/null"
   elseif has("kdialog") then
     cmd = "kdialog " .. (save and "--getsavefilename " or "--getopenfilename ") .. sh_quote(default_name or ".")
-      .. " " .. sh_quote("*." .. ext .. "|" .. label) .. " 2>/dev/null"
+      .. " " .. sh_quote(ext and ("*." .. ext .. "|" .. label) or "*|All files") .. " 2>/dev/null"
   else
     return nil
   end
@@ -170,7 +171,7 @@ local function dialog(save, default_name, label, ext, done)
       if out == "\0unavailable" then return done(nil, "unavailable") end
       out = out:gsub("[\r\n]+$", "")
       if out == "" then return done(nil, "cancelled") end
-      if save and not out:lower():find("%." .. ext .. "$") then out = out .. "." .. ext end
+      if save and ext and not out:lower():find("%." .. ext .. "$") then out = out .. "." .. ext end
       done(out)
     end
     return

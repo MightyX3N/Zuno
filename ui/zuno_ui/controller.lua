@@ -14,6 +14,8 @@ Controller.__index = Controller
 local DATA_FILE = "client.dat"
 local KEY_FILE = "identity.key"
 local OLD_KEY_FILE = "identity.old" -- kept until every server got the "replace my key" hand-over
+local AVATAR_FILE = "avatar.png"    -- the profile picture; uploaded to each server
+local CACHE_MAX = 30 * 1024 * 1024  -- files bigger than this aren't kept in the cache
 
 function Controller.new(env)
   local self = setmetatable({ env = env, conns = {}, toasts = {} }, Controller)
@@ -46,6 +48,7 @@ function Controller:_load()
     streamer = (data.streamer == "on" or data.streamer == "off") and data.streamer or "auto",
     notify = (data.notify == "all" or data.notify == "off") and data.notify or "mentions",
     sound = data.sound ~= false,
+    avatar_hash = type(data.avatar_hash) == "string" and data.avatar_hash or nil,
     recent_emoji = {},
   }
   for _, e in ipairs(type(data.recent_emoji) == "table" and data.recent_emoji or {}) do
@@ -73,13 +76,15 @@ function Controller:save()
     name = self.settings.name, theme = self.settings.theme, host_port = self.settings.host_port,
     host_name = self.settings.host_name, hosting = self.settings.hosting or nil, streamer = self.settings.streamer,
     notify = self.settings.notify, sound = self.settings.sound, recent_emoji = self.settings.recent_emoji,
+    avatar_hash = self.settings.avatar_hash,
     servers = list, active = self.active,
   }))
 end
 
 ------------------------------------------------------------------ account backup / restore
 function Controller:account()
-  return { seed = self.seed, name = self.settings.name, theme = self.settings.theme, servers = self.servers }
+  return { seed = self.seed, name = self.settings.name, theme = self.settings.theme, servers = self.servers,
+           avatar_hash = self.settings.avatar_hash }
 end
 
 function Controller:new_recovery_key() return Account.new_recovery_key(self.env.crypto) end
@@ -103,6 +108,8 @@ function Controller:replace_account(acc)
   self.settings.name = acc.name or self.settings.name
   if acc.theme == "light" or acc.theme == "dark" or acc.theme == "system" then self.settings.theme = acc.theme end
   self.settings.hosting = false
+  self.settings.avatar_hash = acc.avatar_hash
+  pcall(self.env.storage.remove, AVATAR_FILE)
   self.servers = {}
   for _, e in ipairs(acc.servers or {}) do
     if model.parse_address(e.address) then
@@ -134,6 +141,7 @@ function Controller:_open(entry)
     elseif ev == "error" then self:toast(a, "error", entry)
     elseif ev == "notice" then self:toast(a, "info", entry)
     elseif ev == "incoming" then self:_incoming(entry, conn, a, b)
+    elseif ev == "state" then self:_sync_avatar(conn)
     end
   end)
   self.conns[entry] = conn
@@ -193,6 +201,45 @@ end
 
 function Controller:set_theme(t) self.settings.theme = t; self:save() end
 function Controller:set_streamer(s) self.settings.streamer = s; self:save() end
+
+------------------------------------------------------------------ files and avatars
+-- Get a file's bytes: from the local cache, or downloaded from the server (then cached).
+function Controller:fetch(conn, file, done)
+  local key = "cache/" .. file.hash
+  local data = self.env.storage.read(key)
+  if data and #data == file.size then return done(data) end
+  conn:download(file, function(d, err)
+    if d and #d <= CACHE_MAX then pcall(self.env.storage.write, key, d) end
+    done(d, err)
+  end)
+end
+
+function Controller:avatar_data() return self.env.storage.read(AVATAR_FILE) end
+
+-- png bytes (already square) or nil to remove. Every connected server gets it now,
+-- the others when they next connect.
+function Controller:set_avatar(png)
+  if png then self.env.storage.write(AVATAR_FILE, png) else pcall(self.env.storage.remove, AVATAR_FILE) end
+  self.settings.avatar_hash = png and compat.hex(self.env.crypto.blake2b(png, 32)) or nil
+  self:save()
+  for _, conn in pairs(self.conns) do if conn.status == "online" then self:_sync_avatar(conn) end end
+end
+
+function Controller:_sync_avatar(conn)
+  if not conn:supports("avatar") or not conn.me then return end
+  local mine = conn.members[conn.me.user]
+  local have = mine and mine.av and mine.av.hash
+  local want = self.settings.avatar_hash
+  if have == want or conn.avatar_syncing == want then return end
+  if not want then conn:send({ t = "profile", avatar = 0 }); return end
+  local png = self:avatar_data()
+  if not png then return end
+  conn.avatar_syncing = want
+  conn:upload(png, { name = "avatar.png", mime = "image/png", w = 256, h = 256, kind = "avatar" }, function(file)
+    conn.avatar_syncing = nil
+    if file then conn:send({ t = "profile", avatar = file.id }) end
+  end)
+end
 function Controller:set_notify(n) self.settings.notify = n; self:save() end
 function Controller:set_sound(on) self.settings.sound = on and true or false; self:save() end
 

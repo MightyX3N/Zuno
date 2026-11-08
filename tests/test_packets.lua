@@ -16,7 +16,12 @@ end
 S["invalid packets fail"] = function()
   local bad = {
     { t = "nope" },
-    { t = "send", ch = 1 },                                   -- missing body
+    { t = "send", ch = 1, files = { "x" } },                  -- files must be ids
+    { t = "send", ch = 1, files = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 } },
+    { t = "react", id = 1, e = ":A:", on = true },            -- server emoji names are lowercase
+    { t = "emoji_add", name = "x", file = 1 },                -- too short
+    { t = "upload_chunk", up = 1, off = 0, d = string.rep("a", 49153) },
+    { t = "xfer_offer", to = string.rep("a", 64), x = "1", eph = string.rep("e", 32), sig = string.rep("s", 64), files = { 1 } },
     { t = "send", ch = "1", body = "x" },                     -- wrong type
     { t = "send", ch = 1.5, body = "x" },
     { t = "send", ch = 1, body = "   " },                     -- blank
@@ -30,6 +35,8 @@ S["invalid packets fail"] = function()
     "string",
   }
   for i, p in ipairs(bad) do T.ok(not P.validate_client(p), "packet " .. i .. " should fail") end
+  T.ok(P.validate_client({ t = "send", ch = 1, files = { 3 } }), "files without text")
+  T.ok(P.validate_client({ t = "react", id = 1, e = ":party_cat:", on = true }), "server emoji reaction")
 end
 
 S["clean_text"] = function()

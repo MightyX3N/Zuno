@@ -274,11 +274,11 @@ local function apply_msg(self, m)
     return "deleted"
   end
   if cur then
-    cur.body, cur.edited, cur.rev, cur.reply, cur.rx = m.body, m.edited, m.rev, m.reply, m.rx
+    cur.body, cur.edited, cur.rev, cur.reply, cur.rx, cur.files = m.body, m.edited, m.rev, m.reply, m.rx, m.files
     return "edited"
   end
   local entry = { id = m.id, ch = m.ch, a = m.a, at = m.at, body = m.body, edited = m.edited, rev = m.rev,
-                  reply = m.reply, rx = m.rx }
+                  reply = m.reply, rx = m.rx, files = m.files }
   s.by_id[m.id] = entry
   insert_sorted(s.list, entry)
   return "new", entry
@@ -298,6 +298,8 @@ function Conn:_on_packet(p)
     self.server = p.server
     self.me = p.me
     self.unclaimed = p.unclaimed
+    self.emoji = p.emoji or {}
+    self.limits = p.limits or {}
     if p.server and p.server.name and self.entry.name ~= p.server.name then
       self.entry.name = p.server.name; self:_emit("entry")
     end
@@ -313,9 +315,12 @@ function Conn:_on_packet(p)
     for ch, s in pairs(self.msgs) do
       if s.loaded then self:send({ t = "since", ch = ch, rev = s.rev }) end
     end
+    self:_resume_transfers()
     -- resend messages that never got confirmed
     for nonce, pm in pairs(self.pending) do
-      if pm.state == "sending" then self:send({ t = "send", ch = pm.ch, body = pm.body, nonce = nonce, reply = pm.reply_to }) end
+      if pm.state == "sending" then
+        self:send({ t = "send", ch = pm.ch, body = pm.body ~= "" and pm.body or nil, nonce = nonce, reply = pm.reply_to, files = pm.ids })
+      end
     end
     self:_emit("state")
   elseif t == "messages" then
@@ -365,7 +370,7 @@ function Conn:_on_packet(p)
     if m then m.online = p.online end
     self:_emit("members")
   elseif t == "member" then
-    self.members[p.user] = { user = p.user, name = p.name, role = p.role, online = p.online }
+    self.members[p.user] = { user = p.user, name = p.name, role = p.role, online = p.online, av = p.av }
     if self.me and self.me.user == p.user then self.me.name, self.me.role = p.name, p.role end
     if p.role == "owner" then self.unclaimed = nil end
     self:_emit("members")
@@ -413,6 +418,17 @@ function Conn:_on_packet(p)
     if self.me and self.me.user == p.old then self.me.user = p.new end
     self:_emit("members")
     if t == "rekeyed" then self:_emit("rekeyed", p) end
+  elseif t == "emoji" then
+    self.emoji = p.list or {}
+    self:_emit("emoji")
+  elseif t == "upload_ready" or t == "upload_ack" or t == "upload_done" then
+    self:_upload_packet(p)
+  elseif t == "file_data" then
+    self:_download_packet(p)
+  elseif t:sub(1, 5) == "xfer_" then
+    self:_emit("xfer", p)
+  elseif t == "err" and self:_transfer_error(p) then
+    return
   elseif t == "err" then
     if p.re and self.pending_q and self.pending_q[p.re] then
       local pm = self.pending[self.pending_q[p.re]]
@@ -463,12 +479,13 @@ local nonce_counter = 0
 function Conn:supports(feature)
   local v = self.session_version or 1
   if feature == "reply" or feature == "react" then return v >= 2 end
+  if feature == "files" or feature == "avatar" or feature == "emoji" or feature == "xfer" then return v >= 3 end
   return true
 end
 
-function Conn:send_message(ch, body, reply_to)
-  body = P.clean_text(body)
-  if body == "" then return false end
+function Conn:send_message(ch, body, reply_to, files)
+  body = P.clean_text(body or "")
+  if body == "" and not (files and #files > 0) then return false end
   if compat.utf8_len(body) > P.LIMITS.message_chars then
     self:_emit("error", ("Messages can be up to %d characters."):format(P.LIMITS.message_chars), "too_long")
     return false
@@ -484,11 +501,185 @@ function Conn:send_message(ch, body, reply_to)
     local target = self.msgs[ch] and self.msgs[ch].by_id[reply_to]
     reply = { id = reply_to, a = target and target.a, b = target and target.body }
   end
+  local ids
+  if files and #files > 0 then
+    ids = {}
+    for i, f in ipairs(files) do ids[i] = f.id end
+  end
   self.pending[nonce] = { ch = ch, body = body, at = self.env.now(), state = "sending", a = self.me and self.me.user,
-                          reply_to = reply_to, reply = reply }
-  self:send({ t = "send", ch = ch, body = body, nonce = nonce, q = self.q, reply = reply_to })
+                          reply_to = reply_to, reply = reply, files = files, ids = ids }
+  self:send({ t = "send", ch = ch, body = body ~= "" and body or nil, nonce = nonce, q = self.q, reply = reply_to, files = ids })
   self:_emit("msg", ch, "pending")
   return true
+end
+
+--------------------------------------------------------------------- server emoji
+-- name -> { name, file, hash, size }, rebuilt when the list changes. emoji_key changes with it
+-- (layouts that show custom emoji are cached by it).
+function Conn:custom_emoji(name)
+  local list = self.emoji or {}
+  if self._emoji_src ~= list then
+    self._emoji_src, self._emoji_map = list, {}
+    local keys = {}
+    for _, e in ipairs(list) do
+      self._emoji_map[e.name] = { id = e.file, hash = e.hash, size = e.size, name = e.name }
+      keys[#keys + 1] = e.name .. "=" .. tostring(e.hash)
+    end
+    self.emoji_key = table.concat(keys, ",")
+  end
+  return self._emoji_map[name]
+end
+
+--------------------------------------------------------------------- uploads (protocol 3)
+-- conn:upload(data, { name, mime, w, h, kind }, done) -> job. done(file) or done(nil, message).
+-- job.sent / job.acked / job.size show progress. Survives reconnects (the server resumes).
+local UPLOAD_WINDOW = 6 -- chunks in flight
+
+function Conn:upload(data, meta, done)
+  local job = { data = data, size = #data, meta = meta, done = done, sent = 0, acked = 0, state = "starting",
+                hash = self.env.crypto.blake2b(data, 32) }
+  self.upload_jobs = self.upload_jobs or {}
+  self.upload_jobs[#self.upload_jobs + 1] = job
+  self:_start_upload(job)
+  return job
+end
+
+function Conn:_start_upload(job)
+  self.q = (self.q or 0) + 1
+  job.q, job.up, job.sent, job.acked = self.q, nil, 0, 0
+  self:send({ t = "upload", q = job.q, name = job.meta.name, size = job.size, hash = require("zuno.msgpack").bin(job.hash),
+              mime = job.meta.mime, w = job.meta.w, h = job.meta.h, kind = job.meta.kind or "file" })
+end
+
+function Conn:_find_upload(p)
+  for _, job in ipairs(self.upload_jobs or {}) do
+    if (p.re and job.q == p.re) or (p.up and job.up == p.up) then return job end
+  end
+end
+
+function Conn:_finish_upload(job, file, err)
+  for i, j in ipairs(self.upload_jobs or {}) do if j == job then table.remove(self.upload_jobs, i); break end end
+  job.state = file and "done" or "failed"
+  job.file, job.error = file, err
+  if job.done then job.done(file, err) end
+  self:_emit("upload", job)
+end
+
+function Conn:_pump_upload(job)
+  local mp = require("zuno.msgpack")
+  local CH = P.LIMITS.chunk
+  while job.state == "sending" and job.sent < job.size and job.sent - job.acked < UPLOAD_WINDOW * CH do
+    local d = job.data:sub(job.sent + 1, job.sent + CH)
+    if not self:send({ t = "upload_chunk", up = job.up, off = job.sent, d = mp.bin(d) }) then return end
+    job.sent = job.sent + #d
+  end
+end
+
+function Conn:_upload_packet(p)
+  local job = self:_find_upload(p)
+  if not job then return end
+  if p.t == "upload_done" then
+    job.acked = job.size
+    return self:_finish_upload(job, p.file)
+  elseif p.t == "upload_ready" then
+    job.up, job.state = p.up, "sending"
+    job.sent, job.acked = p.have, p.have
+  elseif p.t == "upload_ack" then
+    job.acked = p.have
+    if p.have < job.sent and job.sent - p.have > UPLOAD_WINDOW * P.LIMITS.chunk then job.sent = p.have end
+  end
+  self:_pump_upload(job)
+  self:_emit("upload", job)
+end
+
+function Conn:cancel_upload(job)
+  if job.up then self:send({ t = "upload_cancel", up = job.up }) end
+  self:_finish_upload(job, nil, "cancelled")
+end
+
+--------------------------------------------------------------------- downloads (protocol 3)
+-- conn:download(file, done) with file = { id, size, hash }. done(data) or done(nil, message).
+-- Several callers asking for the same file share one download.
+local DL_PIECE = 512 * 1024
+
+function Conn:download(file, done)
+  self.downloads = self.downloads or {}
+  local d = self.downloads[file.id]
+  if d then d.waiting[#d.waiting + 1] = done; return d end
+  d = { file = file, parts = {}, got = 0, next_off = 0, inflight = 0, waiting = { done } }
+  self.downloads[file.id] = d
+  self:_pump_download(d)
+  return d
+end
+
+function Conn:download_progress(id)
+  local d = self.downloads and self.downloads[id]
+  return d and d.got / math.max(1, d.file.size) or nil
+end
+
+function Conn:_pump_download(d)
+  while d.inflight < 2 and d.next_off < d.file.size do
+    local len = math.min(DL_PIECE, d.file.size - d.next_off)
+    self.q = (self.q or 0) + 1
+    d.q = d.q or {}
+    d.q[self.q] = true
+    if not self:send({ t = "file_get", q = self.q, id = d.file.id, off = d.next_off, len = len }) then return end
+    d.next_off = d.next_off + len
+    d.inflight = d.inflight + 1
+    d.piece_ends = d.piece_ends or {}
+    d.piece_ends[d.next_off] = true
+  end
+end
+
+function Conn:_end_download(d, data, err)
+  self.downloads[d.file.id] = nil
+  for _, cb in ipairs(d.waiting) do cb(data, err) end
+end
+
+function Conn:_download_packet(p)
+  local d = self.downloads and self.downloads[p.id]
+  if not d or d.parts[p.off] then return end
+  d.parts[p.off] = p.d
+  d.got = d.got + #p.d
+  if d.piece_ends[p.off + #p.d] then d.inflight = d.inflight - 1 end
+  if d.got >= d.file.size then
+    local offs = {}
+    for off in pairs(d.parts) do offs[#offs + 1] = off end
+    table.sort(offs)
+    local list = {}
+    for i, off in ipairs(offs) do list[i] = d.parts[off] end
+    local data = table.concat(list)
+    if #data ~= d.file.size or (d.file.hash and compat.hex(self.env.crypto.blake2b(data, 32)) ~= d.file.hash) then
+      return self:_end_download(d, nil, "the file arrived damaged")
+    end
+    return self:_end_download(d, data)
+  end
+  self:_pump_download(d)
+  self:_emit("download", p.id)
+end
+
+-- After a reconnect: uploads start over (the server resumes from what it has), downloads
+-- ask again for what's missing.
+function Conn:_resume_transfers()
+  for _, job in ipairs(self.upload_jobs or {}) do self:_start_upload(job) end
+  for _, d in pairs(self.downloads or {}) do
+    d.inflight, d.piece_ends, d.next_off = 0, {}, d.got
+    -- simplest correct restart: drop partial pieces past the contiguous prefix
+    local off, parts = 0, {}
+    while d.parts[off] do parts[off] = d.parts[off]; off = off + #d.parts[off] end
+    d.parts, d.got, d.next_off = parts, off, off
+    self:_pump_download(d)
+  end
+end
+
+-- Errors that belong to an upload or a download. Returns true if handled.
+function Conn:_transfer_error(p)
+  local job = self:_find_upload(p)
+  if job then self:_finish_upload(job, nil, p.msg); return true end
+  for _, d in pairs(self.downloads or {}) do
+    if p.re and d.q and d.q[p.re] then self:_end_download(d, nil, p.msg); return true end
+  end
+  return false
 end
 
 function Conn:pending_for(ch)

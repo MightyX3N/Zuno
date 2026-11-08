@@ -186,6 +186,13 @@ Keys are free to make, so anyone can create endless identities. Servers need gat
 - **Reactions**: `react {id, e, on}`; up to 20 different emoji per message; any emoji the server can't rule out as text is accepted (clients show unknown ones as text). Each change bumps the message revision, so resuming clients get it. Hover shows who reacted.
 - Protocol 2 adds `reply` and `react`. Version 1 clients still chat: they just don't see the reply/react buttons and ignore the new fields.
 
+### 5.13 Files, avatars and server emoji (built, protocol 3)
+- **Uploads** go up in 48 KB chunks with a small window (`upload` → `upload_ready` → `upload_chunk`/`upload_ack` → `upload_done`). The client sends the BLAKE2b-256 of the file first; the server hashes what arrives and only keeps it if it matches. Bytes it already has aren't sent again. A dropped connection resumes from where it stopped (part files per person and content).
+- **Storage**: content-addressed files in `<data>/files/`, one database row per upload (name, kind, owner). Deleting a message deletes its files once nothing else uses them; uploads nobody attached are removed after a day. Owner settings in `config.lua`: `max_file_mb` (default 25) and `max_storage_mb` (0 = no limit). Older configs get the new settings written in on start.
+- **Messages** carry up to 10 files (`files = {id...}`; text may be empty). Images show inline (up to 400×300, click for a viewer with Save); images over 12 MB load on click; other files show as a card with Save. Clients cache downloaded files by hash (up to 30 MB each).
+- **Avatars**: Settings → General. The client crops and scales the picture to a 256 px PNG and uploads it to every server (others get it when they next connect). Servers send `av = {id, hash, size}` with each member. Linking a device or importing an account carries the avatar's hash; the picture itself stays on the servers.
+- **Server emoji**: the owner adds them from the emoji picker ("This server" → +): 64 px PNG, name of 2–32 `a-z 0-9 _` that isn't a normal emoji name, up to 200 per server. Used as `:name:` in messages (old clients see the text) and as reactions; removing one removes its reactions. Right-click in the picker to remove.
+
 ### 5.12 Notifications while Zuno runs (built)
 - Setting: **All messages / Mentions & replies (default) / Nothing**, plus a sound (made in code, no file) and a "Send a test" button.
 - Nothing is shown for the channel you're looking at in a focused window. In a focused window other messages show as an in-app toast; in the background they become a system notification (Windows: tray balloon, shown as a normal Windows notification; Linux: `notify-send`; macOS: `osascript`) and the taskbar entry flashes. Bursts within 2 seconds make one notification.
@@ -343,8 +350,8 @@ tests/      test runner + suites (LuaJIT, and Lua 5.4 for the shared code)
 - [x] Streamer mode (blur + reveal, Copy buttons, OBS/Streamlabs auto-detect on desktop)
 - [x] "Replace my key" hand-over (server-owner dispute tools: Phase 3)
 - [x] Markdown, mentions, replies, reactions, emoji (Twemoji, picker, :shortcodes:)
-- [ ] Custom emoji per server (needs uploads)
-- [ ] File and image uploads (chunked over TCP), avatars
+- [x] Custom emoji per server
+- [x] File and image uploads (chunked over TCP), avatars
 - [x] Notifications while the app is running
 - [ ] Direct file sharing: offer / accept / decline prompt
 - [ ] Direct file sharing: end-to-end encryption for the receiver's key

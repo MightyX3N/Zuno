@@ -12,6 +12,11 @@ Config.DEFAULTS = {
   max_handshakes = 32,        -- connections still in the handshake at once
   handshake_timeout = 10,     -- seconds
   idle_timeout = 120,         -- seconds without any packet (clients ping every 30 s)
+  max_file_mb = 25,           -- biggest upload (files and images in channels)
+  max_storage_mb = 0,         -- 0 = no limit on all stored files together
+  allow_relay = true,         -- direct transfers may stream through this server when peer-to-peer fails
+  max_relay_mb = 0,           -- 0 = no limit per relayed transfer
+  udp = true,                 -- answer on UDP (same port) so clients can find a direct route to each other
 }
 
 local TEMPLATE = [[
@@ -32,12 +37,23 @@ return {
   max_handshakes = %d,
   handshake_timeout = %d,
   idle_timeout = %d,
+
+  -- Files people post in channels (stored in the "files" folder next to this file)
+  max_file_mb = %d,
+  max_storage_mb = %d, -- 0 = no limit
+
+  -- Direct file transfers between two people. They go peer-to-peer when possible;
+  -- otherwise they can stream through this server (never stored).
+  allow_relay = %s,
+  max_relay_mb = %d, -- 0 = no limit per transfer
+  udp = %s,          -- lets clients find a direct route. With playit.gg, add a UDP tunnel to the same port.
 }
 ]]
 
 local function render(c)
   return TEMPLATE:format(c.name, c.port, c.bind, c.max_connections, c.max_connections_per_ip,
-    c.max_handshakes, c.handshake_timeout, c.idle_timeout)
+    c.max_handshakes, c.handshake_timeout, c.idle_timeout, c.max_file_mb, c.max_storage_mb,
+    tostring(c.allow_relay), c.max_relay_mb, tostring(c.udp))
 end
 
 local function sandboxed_load(src, name)
@@ -69,11 +85,14 @@ function Config.load(dir, overrides)
   local c = {}
   for k, v in pairs(Config.DEFAULTS) do c[k] = v end
   for k, v in pairs(file) do c[k] = v end
+  local missing = false
+  for k in pairs(Config.DEFAULTS) do if file[k] == nil then missing = true end end
   if not src then
     if overrides and overrides.name then c.name = overrides.name end
     if overrides and overrides.port then c.port = overrides.port end
-    fs.write(path, render(c))
   end
+  -- first run, or a config from an older version: write it out with every setting listed
+  if missing then fs.write(path, render(c)) end
   for k, v in pairs(overrides or {}) do c[k] = v end
   assert(type(c.port) == "number" and c.port >= 0 and c.port <= 65535, "config: bad port")
   assert(type(c.name) == "string" and #c.name > 0 and #c.name <= 64, "config: name must be 1-64 characters")

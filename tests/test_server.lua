@@ -448,13 +448,118 @@ S["a schema 1 database is upgraded in place"] = function()
   db:close()
   local Store = require("zuno_server.store")
   local st = Store.open(dir .. "/zuno.db")
-  T.eq(st:meta("schema"), "2")
+  T.eq(st:meta("schema"), "3")
   T.eq(st:message(1).body, "old message"); T.eq(st:message(1).reply_to, nil)
   local m = st:add_message(1, "bb", "reply", 2, 1)
   T.eq(m.reply_to, 1)
   T.ok(st:set_reaction(1, "bb", "👍", true, 3, 20))
   T.eq(st:reactions({ 1 })[1][1][1], "👍")
   st:close()
+end
+
+S["uploads, attachments, downloads, avatars and server emoji"] = function()
+  local dir = tmpdir()
+  local srv = start_server(dir)
+  local a = new_client(srv.port, "alice")
+  local b = new_client(srv.port, "bob")
+  local all = { a, b }
+  run_until(srv, all, function() return a.me and b.me end, 5, "synced")
+  T.ok(a:supports("files"))
+  local ch = general(a)
+  a:view(ch); b:view(ch)
+  run_until(srv, all, function() return a:store_for(ch).loaded and b:store_for(ch).loaded end)
+
+  -- a 300 KB file goes up in chunks
+  local data = {}
+  for i = 1, 300 * 1024 / 16 do data[i] = ("%016d"):format(i) end
+  data = table.concat(data)
+  local file, err
+  local job = a:upload(data, { name = "notes.txt", mime = "text/plain" }, function(f, e) file, err = f, e end)
+  run_until(srv, all, function() return file or err end, 10, "upload done")
+  T.ok(file, err); T.eq(file.size, #data); T.eq(job.acked, #data)
+  T.ok(io.open(srv:_blob_path(file.hash)), "blob stored")
+
+  -- the same bytes again: no transfer, same blob
+  local again
+  a:upload(data, { name = "copy.txt" }, function(f) again = f end)
+  run_until(srv, all, function() return again end, 5, "dedupe")
+  T.ok(again.id ~= file.id); T.eq(again.hash, file.hash)
+
+  a:send_message(ch, "", nil, { file })
+  run_until(srv, all, function() local l = b:store_for(ch).list; return l[1] and l[1].files end, 5, "attachment arrived")
+  local att = b:store_for(ch).list[1].files[1]
+  T.eq(att.name, "notes.txt"); T.eq(att.size, #data)
+
+  local got
+  b:download(att, function(d, e) got = d or e end)
+  run_until(srv, all, function() return got end, 10, "download")
+  T.eq(got, data, "same bytes back")
+
+  -- someone else's upload can't be attached
+  b:send({ t = "send", ch = ch, body = "x", files = { again.id } })
+  run_until(srv, all, function() for _, e in ipairs(b.events) do if e[1] == "error" and tostring(e[2]):find("attachment") then return true end end end, 5)
+
+  -- too big for the server
+  local big_err
+  a:upload(string.rep("x", 10), { name = "x", kind = "avatar" }, function(_, e) big_err = e end)
+  run_until(srv, all, function() return big_err end, 5, "avatar must be an image")
+  T.ok(big_err:find("image"))
+
+  -- avatar
+  local av
+  a:upload("fake png bytes", { name = "a.png", mime = "image/png", w = 256, h = 256, kind = "avatar" }, function(f) av = f end)
+  run_until(srv, all, function() return av end, 5, "avatar uploaded")
+  a:send({ t = "profile", avatar = av.id })
+  run_until(srv, all, function() local m = b.members[a.me.user]; return m and m.av and m.av.id == av.id end, 5, "avatar shown to bob")
+  a:send({ t = "profile", avatar = 0 })
+  run_until(srv, all, function() return b.members[a.me.user].av == nil end, 5, "avatar removed")
+  T.ok(not io.open(srv:_blob_path(av.hash)), "old avatar blob deleted")
+
+  -- server emoji: owner only
+  local em
+  a:upload("emoji png", { name = "cat.png", mime = "image/png", w = 64, h = 64, kind = "emoji" }, function(f) em = f end)
+  run_until(srv, all, function() return em end, 5)
+  a:send({ t = "emoji_add", name = "party_cat", file = em.id })
+  run_until(srv, all, function() for _, e in ipairs(a.events) do if e[1] == "error" and tostring(e[2]):find("owner") then return true end end end, 5, "not owner")
+  srv.store:set_member_role(a.me.user, "owner"); a.me.role = "owner"
+  a:send({ t = "emoji_add", name = "party_cat", file = em.id })
+  run_until(srv, all, function() return b.emoji and b.emoji[1] and b.emoji[1].name == "party_cat" end, 5, "emoji list")
+  local m1 = b:store_for(ch).list[1]
+  b:react(m1, ":party_cat:", true)
+  run_until(srv, all, function() local x = a:store_for(ch).by_id[m1.id]; return x.rx and x.rx[1][1] == ":party_cat:" end, 5, "custom reaction")
+  a:send({ t = "emoji_remove", name = "party_cat" })
+  run_until(srv, all, function() return #b.emoji == 0 end, 5, "emoji removed")
+
+  -- deleting the message frees the stored file once nothing uses it
+  a:delete_message(m1.id)
+  run_until(srv, all, function() return b:store_for(ch).by_id[m1.id] == nil end)
+  T.ok(io.open(srv:_blob_path(file.hash)), "still used by the copy upload")
+  srv:stop()
+
+  -- a restart cleans up uploads nobody attached (older than a day)
+  local Store = require("zuno_server.store")
+  local st = Store.open(dir .. "/zuno.db")
+  st.db:run("UPDATE files SET at = 0")
+  st:close()
+  local srv2 = start_server(dir)
+  T.ok(not io.open(srv2:_blob_path(file.hash)), "orphan blob removed on start")
+  srv2:stop()
+end
+
+S["an interrupted upload resumes where it stopped"] = function()
+  local srv = start_server(tmpdir())
+  local a = new_client(srv.port, "alice")
+  run_until(srv, { a }, function() return a.me end, 5)
+  local data = string.rep("0123456789abcdef", 40000) -- 640 KB
+  local file
+  local job = a:upload(data, { name = "big.bin" }, function(f) file = f end)
+  run_until(srv, { a }, function() return job.acked > 200000 end, 10, "part sent")
+  a.transport:close()
+  run_until(srv, { a }, function() return a.status == "online" and job.state == "sending" end, 15, "reconnected")
+  T.ok(job.acked > 0 and job.acked < #data, "resumed from the middle, not from 0: " .. job.acked)
+  run_until(srv, { a }, function() return file end, 10, "finished")
+  T.eq(file.size, #data)
+  srv:stop()
 end
 
 S["hosting owner becomes owner on first connect; names update on reconnect"] = function()

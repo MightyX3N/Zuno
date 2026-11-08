@@ -8,6 +8,7 @@ local Rich = require("zuno_ui.rich")
 local E = require("zuno_ui.emoji")
 local Compose = require("zuno_ui.compose")
 local Picker = require("zuno_ui.emoji_picker")
+local FilesUI = require("zuno_ui.files_ui")
 local LinkUI = require("zuno_ui.link_ui")
 
 local App = {}
@@ -112,8 +113,20 @@ function App:icon_button(id, icon, x, y, size, tip, active)
   return st.clicked
 end
 
-function App:avatar(key, name, x, y, size)
+-- Round picture of a member: their uploaded avatar when there is one (conn given), else a letter.
+function App:avatar(key, name, x, y, size, conn)
   local T = self.T
+  local m = conn and conn.members[key]
+  local av = m and m.av
+  if conn == nil and key == self.ctl.key then
+    local c = self.ctl:conn()
+    av = c and c.members[key] and c.members[key].av
+    conn = c
+  end
+  if av and self.P.image_from_data then
+    local img = FilesUI.image(self, conn, av)
+    if img then FilesUI.draw_fit(self.P, img, x, y, size, size, true, size / 2); return end
+  end
   local c = Theme.pick(T.avatars, key or name or "?")
   self.P.circle(x + size / 2, y + size / 2, size / 2, c)
   local letter = (name or "?"):match("^[%z\1-\127\194-\244][\128-\191]*") or "?"
@@ -149,6 +162,9 @@ end
 function App:file_dropped(name, data)
   if name:lower():find("%.zunokey$") then
     AccountUI.open_import(self, { name = name, data = data })
+  elseif self.page ~= "add" and self.ctl:conn() and self.ctl:conn().status == "online" then
+    local entry = self.ctl.servers[self.ctl.active]
+    FilesUI.attach(self, self.ctl:conn(), self:view_for(entry), name, data)
   elseif self.on_file_dropped then
     self.on_file_dropped(name, data)
   else
@@ -202,6 +218,7 @@ function App:draw()
     elseif self.modal.kind == "import" then AccountUI.draw_import(self, w, h)
     elseif self.modal.draw then self.modal.draw(self, w, h) end
   end
+  if self.viewer then FilesUI.draw_viewer(self, w, h) end
   if self.dialog then self:draw_dialog(w, h) end
   if self.picker then Picker.draw(self) end
   if self.menu then self:draw_menu(w, h) end
@@ -213,6 +230,7 @@ function App:draw()
   if ui:pressed("escape") then
     if self.menu then self.menu = nil
     elseif self.picker then self.picker = nil
+    elseif self.viewer then self.viewer = nil
     elseif self.dialog then self.dialog = nil
     elseif self.modal and not self.modal.sticky then self.modal = nil
     elseif self.settings_open then self.settings_open = false end
@@ -381,13 +399,28 @@ function App:draw_nav(conn, entry, v, x, y, w, h)
   local me_name = conn.me and conn.me.name or self.ctl:display_name()
   local st = ui:hit("me", cx, my, w - 28, 52, { tip = "Settings" })
   P.rect(cx, my, w - 28, 52, st.hovered and T.input or T.sunken, 10)
-  self:avatar(self.ctl.key, me_name, cx + 10, my + 10, 32)
+  self:avatar(self.ctl.key, me_name, cx + 10, my + 10, 32, conn)
   ui:text_fit(me_name, cx + 52, my + 9, w - 28 - 62, self:font("semibold", 14), T.text)
   local status_text, status_color = "Online", T.voice
   if conn.status ~= "online" then status_text, status_color = "Offline", T.faint end
   if conn:is_owner() then status_text = status_text .. " · Owner" end
   P.text(status_text, cx + 52, my + 28, self:font("regular", 12), status_color)
   if st.clicked then self.settings_open = true end
+end
+
+function App:member_menu(conn, entry, m)
+  local ui = self.ui
+  local items = {}
+  local v = self:view_for(entry)
+  if v.ch and m.user ~= self.ctl.key then
+    items[#items + 1] = { label = "Mention", fn = function()
+      local f = self:composer(entry, v.ch)
+      f:insert("@" .. m.name .. " "); f:focus()
+    end }
+  end
+  if self.on_member_menu then self.on_member_menu(items, conn, entry, m) end
+  items[#items + 1] = { label = "Copy name", fn = function() self.P.set_clipboard(m.name) end }
+  self:open_menu(ui.rclick_x, ui.rclick_y, items)
 end
 
 function App:draw_info(conn, entry, x, y, w, h)
@@ -436,15 +469,20 @@ function App:draw_info(conn, entry, x, y, w, h)
   for _, list in ipairs({ online, offline }) do
     for _, m in ipairs(list) do
       if cy > y + h then break end
-      P.circle(cx + 4, cy + 10, 4, m.online and T.online or T.line)
+      local ms = self.ui:hit("member:" .. m.user, cx - 6, cy - 4, iw + 12, 32, { cursor = false })
+      if ms.hovered then P.rect(cx - 6, cy - 4, iw + 12, 32, T.hover, 8) end
+      self:avatar(m.user, m.name, cx, cy, 24, conn)
+      P.circle(cx + 21, cy + 21, 5, T.bg)
+      P.circle(cx + 21, cy + 21, 3.5, m.online and T.online or T.line)
       local col = m.online and T.text or T.faint
       local role = m.role == "owner" and "Owner" or ""
-      self.ui:text_fit(m.name, cx + 18, cy + 10 - P.line_height(f) / 2, iw - 18 - (role ~= "" and 50 or 0), f, col)
+      self.ui:text_fit(m.name, cx + 34, cy + 12 - P.line_height(f) / 2, iw - 34 - (role ~= "" and 50 or 0), f, col)
       if role ~= "" then
         local rf = self:font("regular", 12)
-        P.text(role, cx + iw - P.measure(rf, role), cy + 10 - P.line_height(rf) / 2, rf, T.faint)
+        P.text(role, cx + iw - P.measure(rf, role), cy + 12 - P.line_height(rf) / 2, rf, T.faint)
       end
-      cy = cy + 27
+      if ms.rclicked then self:member_menu(conn, entry, m) end
+      cy = cy + 34
     end
   end
   self.ui:unclip()
@@ -463,6 +501,11 @@ function App:rich_ctx(conn)
     self._rich_ctx = ctx
   end
   ctx.name_for = function(k) return conn:member_name(k) end
+  ctx.custom = function(name) return conn:custom_emoji(name) end
+  ctx.draw_custom = function(file, x, y, size)
+    local img = FilesUI.image(self, conn, file)
+    if img then FilesUI.draw_fit(self.P, img, x, y, size, size, false) end
+  end
   return ctx
 end
 
@@ -472,6 +515,7 @@ function App:rich(conn, body, width)
   if body:find("<@", 1, true) then
     key = key .. "|" .. (body:gsub("<@(%x+)>", function(k) return conn:member_name(k) end))
   end
+  if body:find(":", 1, true) then conn:custom_emoji(""); key = key .. "|e:" .. (conn.emoji_key or "") end
   local L = self.rich_cache[key]
   if L then return L end
   if self.rich_count > 3000 then self.rich_cache, self.rich_count = {}, 0 end
@@ -492,7 +536,7 @@ function App:reaction_layout(m, width)
     local cnt = tostring(#r[2])
     local pw = 8 + 18 + 6 + self.P.measure(f, cnt) + 10
     if x > 0 and x + pw > width - 40 then x = 0; y = y + PILL_H + PILL_GAP end
-    out[#out + 1] = { x = x, y = y, w = pw, emoji = r[1], count = cnt, keys = r[2], idx = E.lookup(r[1]) }
+    out[#out + 1] = { x = x, y = y, w = pw, emoji = r[1], count = cnt, keys = r[2], idx = E.lookup(r[1]), custom = r[1]:match("^:([a-z0-9_]+):$") }
     x = x + pw + PILL_GAP
   end
   out.add_x, out.add_y = x, y
@@ -519,17 +563,29 @@ function App:message_layout(conn, v, ch, width)
     end
     if v.new_marker and m.id == v.new_marker then add({ kind = "new", h = 30 }); prev = nil end
     local header = not prev or prev.a ~= m.a or (m.at - prev.at) > GROUP_GAP or pending ~= prev.pending or m.reply ~= nil
-    local L = self:rich(conn, m.body, text_w)
+    local L = m.body ~= "" and self:rich(conn, m.body, text_w) or { h = 0, ops = {}, hits = {} }
     local reply_h = m.reply and 24 or 0
+    local fitems, files_h = FilesUI.layout(m.files, text_w)
     local pills, pills_h = self:reaction_layout(m, text_w)
-    local h = L.h + (header and (14 + 23) or 6) + reply_h + pills_h
-    add({ kind = "msg", m = m, h = h, rich = L, header = header, lh = lh, pending = pending, reply_h = reply_h, pills = pills })
+    local h = L.h + files_h + (header and (14 + 23) or 6) + reply_h + pills_h + (m.upload and 22 or 0)
+    add({ kind = "msg", m = m, h = h, rich = L, header = header, lh = lh, pending = pending, reply_h = reply_h, pills = pills,
+          fitems = fitems, files_h = files_h })
     prev = { a = m.a, at = m.at, day = day, pending = pending }
   end
   for _, m in ipairs(s.list) do add_msg(m) end
   for _, pm in ipairs(conn:pending_for(ch)) do
     add_msg({ id = -1, a = pm.a or self.ctl.key, at = math.floor(pm.at * 1000), body = pm.body, nonce = pm.nonce, state = pm.state,
-              error = pm.error, reply = pm.reply }, true)
+              error = pm.error, reply = pm.reply, files = pm.files }, true)
+  end
+  -- messages whose files are still uploading
+  for i, box in ipairs(v.outbox or {}) do
+    if box.ch == ch then
+      local names = {}
+      for _, a in ipairs(box.list) do names[#names + 1] = a.name end
+      add_msg({ id = -1, nonce = "outbox" .. i, a = self.ctl.key, at = math.floor(box.at * 1000), body = box.text,
+                reply = box.reply_to and { id = box.reply_to }, upload = box, state = box.state, error = box.error,
+                upload_names = table.concat(names, ", ") }, true)
+    end
   end
   return items, y
 end
@@ -582,9 +638,10 @@ function App:draw_chat(conn, entry, v, x, y, w, h)
   local comp_h = fh + 24
   if v.replying and ch and not conn:store_for(ch.id).by_id[v.replying] then v.replying = nil end
   local edit_bar = (v.editing or v.replying) and 30 or 0
+  local attach_h = FilesUI.attach_height(v)
   local typing_h = 22
   local comp_y = y + h - 20 - comp_h
-  local list_bottom = comp_y - edit_bar - typing_h
+  local list_bottom = comp_y - edit_bar - attach_h - typing_h
   local list_h = list_bottom - top
 
   if ch then self:draw_messages(conn, entry, v, ch, x, top, w, list_h) end
@@ -620,21 +677,25 @@ function App:draw_chat(conn, entry, v, x, y, w, h)
   local focused = field:focused()
   P.rect(cx, comp_y, cw, comp_h, T.card, 14)
   P.rect_line(cx, comp_y, cw, comp_h, focused and T.faint or T.input, 14, 1)
-  local attach = ui:hit("attach", cx + 10, comp_y + comp_h / 2 - 15, 30, 30, { tip = "File sharing arrives in a later update", cursor = false })
-  Icons.draw(P, "plus", cx + 16, comp_y + comp_h / 2 - 9, 18, attach.hovered and T.soft or T.faint)
+  local can_files = conn:supports("files")
+  local attach = ui:hit("attach", cx + 10, comp_y + comp_h / 2 - 15, 30, 30,
+    { tip = can_files and "Attach files (or drop them here)" or "This server is too old for files", cursor = can_files and "hand" or false })
+  Icons.draw(P, "plus", cx + 16, comp_y + comp_h / 2 - 9, 18, attach.hovered and T.text or T.faint)
+  if attach.clicked and can_files then FilesUI.pick(self, conn, v) end
+  FilesUI.draw_attachments(self, v, cx, comp_y - edit_bar - FilesUI.attach_height(v), cw)
   local ph = conn.status == "online" and ("Message " .. ch.name) or "Waiting for the connection…"
   field:layout(cx + 48, comp_y + 12, comp_inner_w, self:font("regular", 14), T.text, T.faint, ph)
   ui:hit("composer_field", cx + 44, comp_y, comp_inner_w + 8, comp_h, { cursor = "ibeam" })
   field:draw()
-  local can_send = field:get():find("%S") ~= nil and conn.status == "online"
+  local can_send = (field:get():find("%S") ~= nil or (v.attach and #v.attach > 0)) and conn.status == "online"
   local eb = ui:hit("composer:emoji", cx + cw - 82 - 38, comp_y + comp_h - 44 + 6, 32, 32, { tip = "Emoji" })
   if eb.hovered then P.rect(cx + cw - 82 - 38, comp_y + comp_h - 44 + 6, 32, 32, T.hover, 8) end
   Icons.draw(P, "smile", cx + cw - 82 - 38 + 7, comp_y + comp_h - 44 + 13, 18, eb.hovered and T.text or T.faint)
   if eb.clicked then
-    Picker.open(self, cx + cw - 82 - 22, comp_y, function(_, idx)
-      field:insert(":" .. E.name(idx) .. ": ")
+    Picker.open(self, cx + cw - 82 - 22, comp_y, function(text, idx)
+      field:insert((idx and (":" .. E.name(idx) .. ":") or text) .. " ")
       field:focus()
-    end)
+    end, { conn = conn })
   end
   if self:button("send", cx + cw - 82, comp_y + comp_h - 44 + 6, 72, 32, v.editing and "Save" or "Send", "primary", { disabled = not can_send }) then
     self:submit(conn, entry, v, ch, field)
@@ -717,7 +778,11 @@ function App:draw_suggestions(conn, field, v, sug, x, bottom, w)
     local st = ui:hit("sug:" .. i, x + 4, iy, w - 8, row)
     if st.hovered then v.sug_sel = i end
     if i == v.sug_sel then P.rect(x + 4, iy, w - 8, row, T.sunken, 8) end
-    if item.emoji then
+    if item.custom then
+      local img = FilesUI.image(self, conn, item.custom)
+      if img then FilesUI.draw_fit(P, img, x + 14, iy + 6, 22, 22, false) end
+      P.text(":" .. item.name .. ":", x + 46, iy + row / 2 - P.line_height(f) / 2, f, T.text)
+    elseif item.emoji then
       E.draw(P, item.emoji, x + 14, iy + 6, 22)
       P.text(":" .. item.name .. ":", x + 46, iy + row / 2 - P.line_height(f) / 2, f, T.text)
     else
@@ -731,13 +796,18 @@ end
 
 function App:submit(conn, entry, v, ch, field)
   local text = field:get()
-  if not text:find("%S") then return end
+  local has_files = v.attach and #v.attach > 0 and not v.editing
+  if not text:find("%S") and not has_files then return end
   if conn.status ~= "online" then self.ctl:toast("Not connected yet.", "error"); return end
   if v.editing then
     conn:edit_message(v.editing, Compose.to_wire(conn, text))
     v.editing = nil
   elseif text:find("^/%a") then
     conn:command(ch.id, text)
+  elseif has_files then
+    FilesUI.send(self, conn, v, ch.id, Compose.to_wire(conn, text), v.replying)
+    v.new_marker = nil
+    v.replying = nil
   else
     if not conn:send_message(ch.id, Compose.to_wire(conn, text), v.replying) then return end
     v.new_marker = nil
@@ -915,9 +985,10 @@ function App:draw_message(conn, entry, v, ch, it, idx, x, y, w, body_f, name_f, 
   end
 
   if it.header then
-    P.text(fmt_time(m.at), x, top + 3, time_f, T.faint)
     local nm = conn:member_name(m.a)
+    self:avatar(m.a, nm, x + 16, top + 2, 38, conn)
     P.text(nm, x + 70, top, name_f, Theme.alpha(Theme.pick(T.names, m.a), alpha))
+    P.text(fmt_time(m.at), x + 70 + P.measure(name_f, nm) + 8, top + 3, time_f, T.faint)
     top = top + 23
   elseif st.hovered then
     P.text(fmt_time(m.at), x, top + 3, self:font("regular", 11), T.faint)
@@ -927,6 +998,36 @@ function App:draw_message(conn, entry, v, ch, it, idx, x, y, w, body_f, name_f, 
   local L = it.rich
   local ctx = self:rich_ctx(conn)
   Rich.draw(L, x + 70, top, ctx, self:rich_colors(), alpha)
+  if it.fitems and #it.fitems > 0 then FilesUI.draw(self, conn, id, it.fitems, x + 70, top + L.h) end
+  if m.upload then
+    local box = m.upload
+    local uy = top + L.h + 4
+    local f = self:font("regular", 12)
+    if box.state == "failed" then
+      P.text("Upload failed" .. (box.error and (": " .. box.error) or ""), x + 70, uy, f, T.danger)
+      local bx = x + w - 130
+      if self:button(id .. ":retry", bx, y + 4, 60, 24, "Retry", "secondary", { radius = 6, font = self:font("medium", 12) }) then
+        for k, o in ipairs(v.outbox) do if o == box then table.remove(v.outbox, k); break end end
+        v.attach = box.list
+        FilesUI.send(self, conn, v, box.ch, box.text, box.reply_to)
+      end
+      if self:button(id .. ":drop", bx + 66, y + 4, 64, 24, "Discard", "secondary", { radius = 6, font = self:font("medium", 12) }) then
+        for k, o in ipairs(v.outbox) do if o == box then table.remove(v.outbox, k); break end end
+      end
+    else
+      local pct = math.floor(FilesUI.outbox_progress(box) * 100)
+      local label = ("Uploading %s · %d%%"):format(m.upload_names, pct)
+      ui:text_fit(label, x + 70, uy, w - 80 - 90, f, T.muted)
+      P.rect(x + 70, uy + 17, math.min(300, w - 80), 3, T.sunken, 1.5)
+      P.rect(x + 70, uy + 17, math.min(300, w - 80) * pct / 100, 3, T.accent, 1.5)
+      if self:button(id .. ":cancel", x + w - 80, y + 4, 70, 24, "Cancel", "secondary", { radius = 6, font = self:font("medium", 12) }) then
+        box.state = "cancelled"
+        for _, j in ipairs(box.jobs) do if j.state ~= "done" then conn:cancel_upload(j) end end
+        for k, o in ipairs(v.outbox) do if o == box then table.remove(v.outbox, k); break end end
+      end
+    end
+    return
+  end
   for hi, hit in ipairs(L.hits) do
     if hit.link then
       local hs = ui:hit(id .. ":link:" .. hi, x + 70 + hit.x, top + hit.y, hit.w, hit.h, { tip = hit.link, cursor = "hand" })
@@ -940,6 +1041,7 @@ function App:draw_message(conn, entry, v, ch, it, idx, x, y, w, body_f, name_f, 
   for _, op in ipairs(L.ops) do if op.atom and (not last or op.y > last.y or (op.y == last.y and op.x >= last.x)) then last = op end end
   local after_x = x + 70 + (last and (last.x + last.atom.w + 6) or 0)
   local after_y = top + (last and last.y or 0) + (ctx.lh - P.line_height(time_f)) / 2
+  if not last then after_y = top + L.h + it.files_h + 2 end
   if L.jumbo then after_x, after_y = x + 70, top + L.h - 14 end
   if m.edited then P.text("(edited)", after_x, after_y, time_f, T.faint) end
   if it.pending then
@@ -961,7 +1063,7 @@ function App:draw_message(conn, entry, v, ch, it, idx, x, y, w, body_f, name_f, 
   -- reactions
   local can_react = conn:supports("react") and conn.status == "online"
   if it.pills then
-    local py = top + L.h + 4
+    local py = top + L.h + it.files_h + 4
     local f = self:font("semibold", 12)
     for pi, pill in ipairs(it.pills) do
       local px = x + 70 + pill.x
@@ -971,12 +1073,15 @@ function App:draw_message(conn, entry, v, ch, it, idx, x, y, w, body_f, name_f, 
         if i > 6 then names[#names + 1] = ("%d more"):format(#pill.keys - 6); break end
         names[#names + 1] = k == self.ctl.key and "You" or conn:member_name(k)
       end
-      local tip = table.concat(names, ", ") .. " · :" .. (pill.idx and E.name(pill.idx) or "?") .. ":"
+      local tip = table.concat(names, ", ") .. " · :" .. (pill.idx and E.name(pill.idx) or pill.custom or "?") .. ":"
       local ps = ui:hit(id .. ":rx:" .. pi, px, py + pill.y, pill.w, PILL_H, { tip = tip })
       P.rect(px, py + pill.y, pill.w, PILL_H, mine_r and T.react_mine or T.react_bg, PILL_H / 2)
       P.rect_line(px, py + pill.y, pill.w, PILL_H, mine_r and T.react_line or (ps.hovered and T.faint or T.line), PILL_H / 2, 1)
+      local cf = pill.custom and conn:custom_emoji(pill.custom)
+      local cimg = cf and FilesUI.image(self, conn, cf)
       if pill.idx then E.draw(P, pill.idx, px + 8, py + pill.y + 5, 18)
-      else P.text(pill.emoji, px + 8, py + pill.y + 6, f, T.text) end
+      elseif cimg then FilesUI.draw_fit(P, cimg, px + 8, py + pill.y + 5, 18, 18, false)
+      else P.text(pill.custom and "?" or pill.emoji, px + 8, py + pill.y + 6, f, T.text) end
       P.text(pill.count, px + 32, py + pill.y + PILL_H / 2 - P.line_height(f) / 2, f, mine_r and T.mention or T.soft)
       if ps.clicked and can_react then conn:react(m, pill.emoji) end
     end
@@ -986,7 +1091,7 @@ function App:draw_message(conn, entry, v, ch, it, idx, x, y, w, body_f, name_f, 
       P.rect_line(ax, ay, 40, PILL_H, as.hovered and T.faint or T.line, PILL_H / 2, 1)
       Icons.draw(P, "react", ax + 11, ay + 5, 18, as.hovered and T.text or T.faint)
       if as.clicked then
-        Picker.open(self, ax + 20, ay, function(e) conn:react(m, e, true) end)
+        Picker.open(self, ax + 20, ay, function(e) conn:react(m, e, true) end, { conn = conn })
       end
     end
   end
@@ -996,7 +1101,7 @@ function App:draw_message(conn, entry, v, ch, it, idx, x, y, w, body_f, name_f, 
   local actions = {}
   if can_react then
     actions[#actions + 1] = { "react", "Add a reaction", function(bx, by)
-      Picker.open(self, bx, by, function(e) conn:react(m, e, true) end)
+      Picker.open(self, bx, by, function(e) conn:react(m, e, true) end, { conn = conn })
     end }
     actions[#actions + 1] = { "reply", "Reply", function() self:start_reply(conn, entry, v, ch, m) end }
   end
@@ -1295,6 +1400,29 @@ function App:draw_settings(w, h)
     if o[1] == "auto" and sel and self:streamer() then label = "Auto · on now" end
     P.text(label, bx + (sw - P.measure(f, label)) / 2, y + 42 - P.line_height(f) / 2, f, sel and T.text or T.soft)
     if st.clicked then ctl:set_streamer(o[1]) end
+  end
+
+  y = y + 78
+  P.text("Profile picture", cx + 28, y, self:font("semibold", 13), T.text)
+  P.text("Shown on all your servers", cx + 150, y + 1, self:font("regular", 12), T.faint)
+  local local_png = ctl:avatar_data()
+  local preview = local_png and P.image_from_data and P.image_from_data("my-avatar:" .. (ctl.settings.avatar_hash or ""), local_png)
+  if preview then FilesUI.draw_fit(P, preview, cx + 28, y + 24, 56, 56, true, 28)
+  else self:avatar(ctl.key, ctl:display_name(), cx + 28, y + 24, 56, nil) end
+  if self:button("settings:avatar", cx + 100, y + 36, 120, 34, ctl.settings.avatar_hash and "Change…" or "Choose…", "secondary") then
+    P.pick_file("Image", nil, function(data, path)
+      if not data then
+        if path ~= "cancelled" then ctl:toast(path == "unavailable" and "No file dialog here." or tostring(path), "error") end
+        return
+      end
+      local png = P.square_png and P.square_png(data, 256)
+      if not png then ctl:toast("That isn't a picture Zuno can read (PNG, JPEG, BMP).", "error"); return end
+      ctl:set_avatar(png)
+      ctl:toast("Profile picture updated")
+    end)
+  end
+  if ctl.settings.avatar_hash and self:button("settings:avatar_rm", cx + 230, y + 36, 100, 34, "Remove", "ghost") then
+    ctl:set_avatar(nil)
   end
   end -- general
 

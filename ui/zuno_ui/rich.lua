@@ -198,9 +198,28 @@ local function atoms_of(span, ctx, face, esize, color)
     return out
   end
   local pieces = span.code and { { text = span.text } } or E.split(span.text)
+  -- server emoji (:name:) inside the plain text pieces
+  if not span.code and ctx.custom then
+    local split = {}
+    for _, piece in ipairs(pieces) do
+      if piece.emoji then split[#split + 1] = piece
+      else
+        local pos = 1
+        for a, name, b in piece.text:gmatch("():([a-z0-9_]+):()") do
+          if a >= pos and ctx.custom(name) then
+            if a > pos then split[#split + 1] = { text = piece.text:sub(pos, a - 1) } end
+            split[#split + 1] = { custom = ctx.custom(name), text = ":" .. name .. ":" }
+            pos = b
+          end
+        end
+        if pos <= #piece.text then split[#split + 1] = { text = piece.text:sub(pos) } end
+      end
+    end
+    pieces = split
+  end
   for _, piece in ipairs(pieces) do
-    if piece.emoji then
-      out[#out + 1] = { emoji = piece.emoji, w = esize + 2, size = esize, link = span.link, raw = piece.text }
+    if piece.emoji or piece.custom then
+      out[#out + 1] = { emoji = piece.emoji, custom = piece.custom, w = esize + 2, size = esize, link = span.link, raw = piece.text }
     else
       for word, space in piece.text:gmatch("([^ ]*)( *)") do
         if word ~= "" then
@@ -244,7 +263,7 @@ local function flow(atoms, x0, y0, width, lh, ops, hits, P)
   local function newline() x = 0; y = y + line_h; line_h = lh end
   local queue = {}
   for _, a in ipairs(atoms) do
-    if not a.space and not a.emoji and a.w > width then
+    if not a.space and not a.emoji and not a.custom and a.w > width then
       for _, p in ipairs(split_atom(a, width, P)) do queue[#queue + 1] = p end
     else
       queue[#queue + 1] = a
@@ -255,7 +274,7 @@ local function flow(atoms, x0, y0, width, lh, ops, hits, P)
       -- no spaces at the start of a wrapped line
     else
       if x > 0 and x + a.w > width and not a.space then newline() end
-      local h = a.emoji and (a.size + 4) or lh
+      local h = (a.emoji or a.custom) and (a.size + 4) or lh
       if h > line_h then line_h = h end
       ops[#ops + 1] = { atom = a, x = x0 + x, y = y0 + y, line = y }
       if a.link or a.mention then
@@ -271,7 +290,11 @@ end
 function R.layout(body, width, ctx)
   local P = ctx.P
   local blocks = R.parse(body)
-  local only, count = E.only_emoji(body)
+  local customs = 0
+  local rest = ctx.custom and body:gsub(":([a-z0-9_]+):", function(n) if ctx.custom(n) then customs = customs + 1; return "" end end) or body
+  local only, count = E.only_emoji(rest)
+  if customs > 0 and not rest:find("%S") then only, count = true, 0 end
+  count = count + customs
   local jumbo = only and count <= 10
   local base_lh = ctx.lh
   local esize = jumbo and 40 or math.floor(P.line_height(ctx.font("regular")) * 1.3 + 0.5)
@@ -356,6 +379,8 @@ function R.draw(L, x, y, ctx, colors, alpha)
       P.circle(x + op.x, y + op.y, 2.5, col(op.color))
     elseif a and a.emoji then
       E.draw(P, a.emoji, x + op.x + 1, y + op.y + (L.jumbo and 4 or (ctx.lh - a.size) / 2), a.size)
+    elseif a and a.custom then
+      if ctx.draw_custom then ctx.draw_custom(a.custom, x + op.x + 1, y + op.y + (L.jumbo and 4 or (ctx.lh - a.size) / 2), a.size) end
     elseif a and not a.space then
       local lh = op.lh or ctx.lh
       local fh = P.line_height(a.font)

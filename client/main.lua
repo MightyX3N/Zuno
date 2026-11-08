@@ -158,7 +158,13 @@ function love.load()
   P.set_system_dark(detect_dark())
   local storage = {
     read = function(name) return love.filesystem.read(name) end,
-    write = function(name, data) assert(love.filesystem.write(name, data)) end,
+    write = function(name, data)
+      local dir = name:match("^(.*)/[^/]*$")
+      if dir then love.filesystem.createDirectory(dir) end
+      assert(love.filesystem.write(name, data))
+    end,
+    remove = function(name) love.filesystem.remove(name) end,
+    list = function(dir) return love.filesystem.getDirectoryItems(dir) end,
   }
   local transport = TCP.factory(resolve)
   ctl = Controller.new({ crypto = crypto, transport = transport, now = love.timer.getTime, storage = storage, host = host,

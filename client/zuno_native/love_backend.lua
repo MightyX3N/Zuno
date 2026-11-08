@@ -88,6 +88,82 @@ function P.draw_image(img, x, y, w, h, sx, sy, sw, sh, c)
   lg.draw(img, q, math.floor(x + 0.5), math.floor(y + 0.5), 0, w / sw, h / sh)
 end
 
+-- Images from bytes (downloaded files, avatars, server emoji). Cached by key, least recently
+-- used dropped first so memory stays bounded.
+local data_images, data_order = {}, {}
+local MAX_DATA_IMAGES = 96
+local function decode(data, name)
+  local ok, id = pcall(function() return love.image.newImageData(love.filesystem.newFileData(data, name or "image")) end)
+  return ok and id or nil
+end
+
+-- Width and height of an image file's bytes, or nil if it isn't an image LÖVE can read.
+function P.image_info(data, name)
+  local id = decode(data, name)
+  if not id then return nil end
+  local w, h = id:getDimensions()
+  id:release()
+  return w, h
+end
+
+function P.image_from_data(key, data)
+  local img = data_images[key]
+  if img then
+    for i, k in ipairs(data_order) do if k == key then table.remove(data_order, i); break end end
+    data_order[#data_order + 1] = key
+    return img
+  end
+  if not data then return nil end
+  local id = decode(data, key)
+  if not id then data_images[key] = false; return nil end
+  local ok, made = pcall(lg.newImage, id, { mipmaps = true })
+  id:release()
+  if not ok then data_images[key] = false; return nil end
+  made:setFilter("linear", "linear"); made:setMipmapFilter("linear")
+  data_images[key] = made
+  data_order[#data_order + 1] = key
+  while #data_order > MAX_DATA_IMAGES do
+    local old = table.remove(data_order, 1)
+    if data_images[old] then data_images[old]:release() end
+    data_images[old] = nil
+  end
+  return made
+end
+function P.image_size(img) return img:getDimensions() end
+
+-- A square PNG (center crop, scaled) from image bytes: avatars and server emoji.
+function P.square_png(data, size)
+  local id = decode(data)
+  if not id then return nil end
+  local src = lg.newImage(id)
+  id:release()
+  local w, h = src:getDimensions()
+  local s = math.min(w, h)
+  local canvas = lg.newCanvas(size, size)
+  local prev = lg.getCanvas()
+  lg.push("all")
+  lg.setCanvas(canvas)
+  lg.clear(0, 0, 0, 0)
+  lg.origin()
+  lg.setColor(1, 1, 1, 1)
+  src:setFilter("linear", "linear")
+  local q = lg.newQuad((w - s) / 2, (h - s) / 2, s, s, w, h)
+  lg.draw(src, q, 0, 0, 0, size / s, size / s)
+  lg.setCanvas(prev)
+  lg.pop()
+  local out = canvas:newImageData():encode("png"):getString()
+  canvas:release(); src:release()
+  return out
+end
+
+-- Same as draw_image, cut to a rounded rectangle (radius = w/2 makes a circle).
+function P.draw_image_round(img, x, y, w, h, radius, sx, sy, sw, sh)
+  lg.stencil(function() lg.rectangle("fill", x, y, w, h, radius, radius, 24) end, "replace", 1)
+  lg.setStencilTest("greater", 0)
+  P.draw_image(img, x, y, w, h, sx, sy, sw, sh)
+  lg.setStencilTest()
+end
+
 local clip_stack = {}
 function P.clip(x, y, w, h)
   clip_stack[#clip_stack + 1] = { lg.getScissor() }

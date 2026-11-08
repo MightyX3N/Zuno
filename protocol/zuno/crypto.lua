@@ -17,6 +17,10 @@ void crypto_aead_lock(uint8_t *cipher_text, uint8_t mac[16], const uint8_t key[3
 int  crypto_aead_unlock(uint8_t *plain_text, const uint8_t mac[16], const uint8_t key[32], const uint8_t nonce[24],
                         const uint8_t *ad, size_t ad_size, const uint8_t *cipher_text, size_t text_size);
 void crypto_blake2b(uint8_t *hash, size_t hash_size, const uint8_t *message, size_t message_size);
+typedef struct { uint64_t hash[8]; uint64_t input_offset[2]; uint64_t input[16]; size_t input_idx; size_t hash_size; } crypto_blake2b_ctx;
+void crypto_blake2b_init(crypto_blake2b_ctx *ctx, size_t hash_size);
+void crypto_blake2b_update(crypto_blake2b_ctx *ctx, const uint8_t *message, size_t message_size);
+void crypto_blake2b_final(crypto_blake2b_ctx *ctx, uint8_t *hash);
 void crypto_x25519_public_key(uint8_t public_key[32], const uint8_t secret_key[32]);
 void crypto_x25519(uint8_t raw_shared_secret[32], const uint8_t your_secret_key[32], const uint8_t their_public_key[32]);
 void crypto_eddsa_to_x25519(uint8_t x25519[32], const uint8_t eddsa[32]);
@@ -96,6 +100,21 @@ function M.blake2b(msg, size)
   local out = u8(size)
   L().crypto_blake2b(out, size, msg, #msg)
   return str(out, size)
+end
+
+-- Incremental BLAKE2b for files: h = M.hasher(32); h:update(chunk) ...; h:final() -> bytes
+function M.hasher(size)
+  size = size or 32
+  local ctx = ffi.new("crypto_blake2b_ctx")
+  L().crypto_blake2b_init(ctx, size)
+  return {
+    update = function(_, data) L().crypto_blake2b_update(ctx, data, #data) end,
+    final = function()
+      local out = u8(size)
+      L().crypto_blake2b_final(ctx, out)
+      return str(out, size)
+    end,
+  }
 end
 
 function M.sha512(msg)

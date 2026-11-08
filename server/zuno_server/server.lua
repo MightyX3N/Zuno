@@ -15,6 +15,7 @@ local version = require("zuno.version")
 local Store = require("zuno_server.store")
 local Config = require("zuno_server.config")
 local fs = require("zuno_server.fs")
+local Files = require("zuno_server.files")
 
 local mp = require("zuno.msgpack")
 local Server = {}
@@ -79,6 +80,7 @@ function Server.new(opts)
     self.store:set_meta("claim_code", new_claim_code())
   end
 
+  self:_files_init()
   self.links = {}        -- sid -> device link relay session
   self.conns = {}        -- socket -> conn
   self.online = {}       -- user key -> { [conn] = true }
@@ -107,6 +109,7 @@ function Server:start()
   self.listener = listener
   local _, port = listener:getsockname()
   self.port = tonumber(port)
+  self:_udp_start()
   self:log("info", ("Zuno server %s \"%s\" listening on port %d"):format(version.APP, c.name, self.port))
   self:log("info", "server key fingerprint: " .. self:fingerprint())
   self:log("info", "verified invite: <your address>#" .. self.key:sub(1, 20))
@@ -120,6 +123,7 @@ end
 function Server:stop()
   for _, conn in pairs(self.conns) do self:_drop(conn, "server stopping") end
   if self.listener then self.listener:close(); self.listener = nil end
+  if self.udp then self.udp:close(); self.udp = nil end
   self.store:close()
   self:log("info", "server stopped")
 end
@@ -181,6 +185,7 @@ function Server:_drop(conn, why)
   conn.sock:close()
   self.conns[conn.sock] = nil
   if conn.link then self:_close_link(conn.link, conn, "closed") end
+  self:_files_dropped(conn)
   if not conn.ready then
     self.handshaking = self.handshaking - 1
   elseif conn.user then
@@ -240,7 +245,7 @@ function Server:_on_ready(conn, ev)
   self.online[key] = self.online[key] or {}
   self.online[key][conn] = true
   self:log("info", ("%s connected as %s%s"):format(key:sub(1, 8), member.name, is_new and " (new member)" or ""))
-  if is_new or changed then self:broadcast({ t = "member", user = key, name = member.name, role = member.role, online = true }, conn)
+  if is_new or changed then self:broadcast(self:member_out(member, true), conn)
   elseif first then self:broadcast({ t = "presence", user = key, online = true }, conn) end
 end
 
@@ -296,7 +301,7 @@ end
 
 -- One loop iteration. Waits up to `timeout` seconds for network activity.
 function Server:step(timeout)
-  local readers, writers = { self.listener }, {}
+  local readers, writers = { self.listener, self.udp }, {}
   for sock, conn in pairs(self.conns) do
     readers[#readers + 1] = sock
     if #conn.out > 0 then writers[#writers + 1] = sock end
@@ -304,6 +309,7 @@ function Server:step(timeout)
   local r, w = socket.select(readers, writers, timeout or 0.05)
   for _, sock in ipairs(r) do
     if sock == self.listener then self:_accept()
+    elseif sock == self.udp then self:_udp_step()
     else local conn = self.conns[sock]; if conn then self:_read(conn) end end
   end
   for _, sock in ipairs(w) do
@@ -339,7 +345,7 @@ local function reply_preview(row)
   return { id = row.id, a = row.author, b = b }
 end
 
-local function msg_fields(row, rx, replied)
+local function msg_fields(row, rx, replied, files, srv)
   local m = {
     id = row.id, ch = row.ch, a = row.author, at = row.at, body = row.body,
     edited = row.edited, deleted = row.deleted == 1 or nil, rev = row.rev,
@@ -347,6 +353,10 @@ local function msg_fields(row, rx, replied)
   if row.deleted ~= 1 then
     if row.reply_to then m.reply = reply_preview(replied); m.reply.id = row.reply_to end
     m.rx = rx -- { {emoji, {keys}}, ... } or nil
+    if files then
+      m.files = {}
+      for i, f in ipairs(files) do m.files[i] = srv:file_out(f) end
+    end
   end
   return m
 end
@@ -360,8 +370,9 @@ function Server:_rows_out(rows)
   end
   local rx = self.store:reactions(ids)
   local replied = self.store:messages_by_id(reply_ids)
+  local files = self.store:message_files(ids)
   local out = {}
-  for i, row in ipairs(rows) do out[i] = msg_fields(row, rx[row.id], row.reply_to and replied[row.reply_to]) end
+  for i, row in ipairs(rows) do out[i] = msg_fields(row, rx[row.id], row.reply_to and replied[row.reply_to], files[row.id], self) end
   return out
 end
 
@@ -386,6 +397,7 @@ end
 
 --------------------------------------------------------------------- handlers
 local H = {}
+Files.install(Server, H, { now_ms = now_ms, take = take, bucket = bucket })
 
 function H.ping(self, conn, pkt) self:send(conn, { t = "pong", n = pkt.n }) end
 
@@ -394,7 +406,8 @@ function H.sync(self, conn)
   local channels, members = {}, {}
   for _, ch in ipairs(self.store:channels()) do channels[#channels + 1] = channel_out(ch) end
   for _, m in ipairs(self.store:members()) do
-    members[#members + 1] = { user = m.key, name = m.name, role = m.role, online = self.online[m.key] ~= nil }
+    local mo = self:member_out(m, self.online[m.key] ~= nil); mo.t = nil
+    members[#members + 1] = mo
   end
   self:send(conn, {
     t = "state",
@@ -402,6 +415,9 @@ function H.sync(self, conn)
     me = { user = me.key, name = me.name, role = me.role },
     channels = channels, members = members, rev = self.store:current_rev(),
     unclaimed = self:claim_code() ~= nil or nil,
+    emoji = self:emoji_out(),
+    limits = { max_file = self.config.max_file_mb * 1024 * 1024, relay = self.config.allow_relay,
+               max_relay = self.config.max_relay_mb > 0 and self.config.max_relay_mb * 1024 * 1024 or nil },
   })
 end
 
@@ -425,8 +441,10 @@ function H.send(self, conn, pkt)
   if not take(conn.sends) then return self:_err(conn, pkt, P.ERR.rate_limited, "slow down a little") end
   local ch = self.store:channel(pkt.ch)
   if not ch or ch.kind ~= "text" then return self:_err(conn, pkt, P.ERR.not_found, "no such channel") end
-  local body = P.clean_text(pkt.body)
-  if body == "" then return self:_err(conn, pkt, P.ERR.invalid, "empty message") end
+  local body = P.clean_text(pkt.body or "")
+  local files, ferr = self:_check_attachments(conn, pkt.files)
+  if not files then return self:_err(conn, pkt, P.ERR.not_found, ferr) end
+  if body == "" and #files == 0 then return self:_err(conn, pkt, P.ERR.invalid, "empty message") end
   local reply
   if pkt.reply then
     local target = self.store:message(pkt.reply)
@@ -435,7 +453,7 @@ function H.send(self, conn, pkt)
     end
     reply = target.id
   end
-  local row = self.store:add_message(ch.id, conn.user, body, now_ms(), reply)
+  local row = self.store:add_message(ch.id, conn.user, body, now_ms(), reply, files)
   self:broadcast(self:_msg_out(row, pkt.nonce))
 end
 
@@ -456,13 +474,17 @@ function H.delete(self, conn, pkt)
   if row.author ~= conn.user and not self:_is_owner(conn.user) then
     return self:_err(conn, pkt, P.ERR.forbidden, "you can only delete your own messages")
   end
-  self:broadcast(self:_msg_out(self.store:delete_message(row.id)))
+  local deleted, gone = self.store:delete_message(row.id)
+  for _, h in ipairs(gone or {}) do self:_delete_blob(h) end
+  self:broadcast(self:_msg_out(deleted))
 end
 
 function H.react(self, conn, pkt)
   if not take(conn.sends) then return self:_err(conn, pkt, P.ERR.rate_limited, "slow down a little") end
   local row = self.store:message(pkt.id)
   if not row or row.deleted == 1 then return self:_err(conn, pkt, P.ERR.not_found, "no such message") end
+  local custom = pkt.e:match("^:([a-z0-9_]+):$")
+  if custom and pkt.on and not self.store:emoji(custom) then return self:_err(conn, pkt, P.ERR.not_found, "no such server emoji") end
   local updated, why = self.store:set_reaction(row.id, conn.user, pkt.e, pkt.on, now_ms(), P.LIMITS.reactions_per_message)
   if why == "too_many" then
     return self:_err(conn, pkt, P.ERR.too_long, ("a message can have up to %d different reactions"):format(P.LIMITS.reactions_per_message))
@@ -479,11 +501,21 @@ function H.typing(self, conn, pkt)
   self:broadcast({ t = "typing", ch = ch.id, user = conn.user }, conn)
 end
 
+function Server:member_out(m, online)
+  return { t = "member", user = m.key, name = m.name, role = m.role, online = online, av = self:member_avatar(m) }
+end
+
 function H.profile(self, conn, pkt)
-  local name = pkt.name:gsub("^%s+", ""):gsub("%s+$", "")
-  self.store:set_member_name(conn.user, name)
-  local m = self.store:member(conn.user)
-  self:broadcast({ t = "member", user = m.key, name = m.name, role = m.role, online = true })
+  if not take(conn.sends) then return self:_err(conn, pkt, P.ERR.rate_limited, "slow down a little") end
+  if pkt.name then
+    local name = pkt.name:gsub("^%s+", ""):gsub("%s+$", "")
+    self.store:set_member_name(conn.user, name)
+  end
+  if pkt.avatar then
+    local ok, err = self:_set_avatar(conn, pkt.avatar)
+    if not ok then return self:_err(conn, pkt, P.ERR.not_found, err) end
+  end
+  self:broadcast(self:member_out(self.store:member(conn.user), true))
 end
 
 function H.claim(self, conn, pkt)
@@ -498,7 +530,7 @@ function H.claim(self, conn, pkt)
   self.store:set_meta("claim_code", nil)
   local m = self.store:member(conn.user)
   self:log("info", m.name .. " (" .. m.key:sub(1, 8) .. ") is now the owner")
-  self:broadcast({ t = "member", user = m.key, name = m.name, role = m.role, online = true })
+  self:broadcast(self:member_out(m, true))
   self:send(conn, { t = "notice", msg = "You are now the owner of this server.", re = pkt.q })
 end
 
@@ -622,8 +654,11 @@ function H.link_close(self, conn, pkt)
   if link and link.sid == pkt.sid then self:_close_link(link, conn, "closed") end
 end
 
+-- Data packets are limited by bandwidth (the send buffer), not by the packet rate limit.
+local BULK = { upload_chunk = true, xfer_data = true }
+
 function Server:_handle(conn, pkt)
-  if not take(conn.general) then
+  if not (type(pkt) == "table" and BULK[pkt.t] and conn.user) and not take(conn.general) then
     -- Way over the limit: a misbehaving client. Drop it.
     return self:_drop(conn, "flooding")
   end

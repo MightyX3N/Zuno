@@ -49,7 +49,9 @@ function A.encode_package(acc)
   for _, e in ipairs(acc.servers or {}) do
     servers[#servers + 1] = { address = e.address, key = e.key, name = e.name }
   end
-  return mp.encode({ v = 1, seed = mp.bin(acc.seed), name = acc.name, theme = acc.theme, servers = mp.array(servers) })
+  -- the picture itself stays on the servers; the hash tells the new device it's already set
+  return mp.encode({ v = 1, seed = mp.bin(acc.seed), name = acc.name, theme = acc.theme, servers = mp.array(servers),
+                     avatar_hash = acc.avatar_hash })
 end
 
 function A.decode_package(bytes)
@@ -63,7 +65,8 @@ function A.decode_package(bytes)
     end
   end
   return { seed = t.seed, name = type(t.name) == "string" and t.name or nil,
-           theme = type(t.theme) == "string" and t.theme or nil, servers = servers }
+           theme = type(t.theme) == "string" and t.theme or nil, servers = servers,
+           avatar_hash = type(t.avatar_hash) == "string" and #t.avatar_hash == 64 and t.avatar_hash or nil }
 end
 
 function A.export_file(C, acc, recovery_key, kib, passes)
