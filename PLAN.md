@@ -25,10 +25,12 @@ Repo: https://github.com/MightyX3N/Zuno · Studio: DoveCross · Author: MightyX3
 | Browser client | **Wasmoon** (Lua 5.4 in WASM) runs the same Lua UI as the native client. JS only implements the platform API: drawing on a `<canvas>`, with **real HTML `<input>`/`<textarea>` elements placed over the canvas** for typing (proper iOS/Android keyboard, IME, emoji, paste). Not love.js (no JS FFI, ~10–15 MB, bad iOS keyboard) |
 | Lua dialect | Shared code (protocol, UI, layouts, addons) must run on **both LuaJIT (5.1) and Lua 5.4**: no `goto`, no 5.4-only `//` or bitwise operators, use a small `compat` module for bit ops and integer math |
 | iOS | Through the browser client (Safari, add to home screen). No native iOS app |
-| Server | Standalone **LuaJIT + LuaSocket**, no LÖVE. Targets Windows x64, Linux x64, Linux ARM64 (NAS / Raspberry Pi) |
+| Server | Standalone **LuaJIT + LuaSocket**, no LÖVE. Targets Windows x64, Linux x64, Linux ARM64 (NAS / Raspberry Pi). On **Windows** the standalone `Zuno Server.exe` runs the same server code on the **LÖVE runtime with no window** (LÖVE already ships LuaJIT + LuaSocket), so nothing extra has to be built for Windows |
+| Server loop | Single thread, non-blocking sockets + `socket.select`, per-connection buffers and token-bucket rate limits |
 | Client hosting | Desktop client bundles the `server/` package and has a "Host a server" button |
 | Storage (server) | SQLite via LuaJIT FFI |
-| Crypto | Monocypher via FFI (X25519, XChaCha20-Poly1305, Ed25519, Argon2). Browser: matching JS/WASM implementation |
+| Crypto | Monocypher 4 via FFI (X25519, ChaCha20-Poly1305, BLAKE2b, Ed25519 with SHA-512, Argon2). Browser: matching JS/WASM implementation |
+| Handshake | **Noise `XX_25519_ChaChaPoly_BLAKE2b`**, verified against the official cacophony test vectors. Static keys = each side's Ed25519 identity converted to X25519; the Ed25519 keys travel inside the encrypted payloads and must match. The client checks the pinned server key before revealing its own identity. Details: `protocol/README.md` |
 | Voice codec | Opus (libopus via FFI; WebCodecs in browser) |
 | Wire format | `u32` length prefix + MessagePack body |
 | Transport | Raw TCP for native clients, WebSocket for browser, **same port**: server sniffs first bytes (`GET ` = WebSocket upgrade) |
@@ -87,7 +89,8 @@ Zuno works on the free plan, but if the host has Premium, Zuno uses what it adds
 ## 5. Identity, accounts and devices
 
 - Identity = **Ed25519 master key** generated on first launch. No usernames/passwords, no central accounts.
-- Login to a server = sign a random server challenge. Bans, roles, permissions are tied to the public key.
+- Login to a server = the Noise XX handshake, which proves ownership of the identity key (no passwords). Bans, roles, permissions are tied to the public key.
+- **Owner**: whoever hosts from the app becomes owner automatically. A standalone server prints a one-time **claim code** on first start; the first person to send `/claim CODE` becomes owner.
 - Message history lives on servers → new devices see history automatically.
 - **All devices are equal**: every linked device holds the full account (master key, profile, server list, settings, layout choices).
 
@@ -251,19 +254,22 @@ Server owners can connect their own **Jellyfin** server so members watch movies 
 
 - **LÖVE video**: LÖVE only plays Ogg Theora. Real video (Jellyfin, streams) needs libmpv via FFI on every native target, Android included.
 - **Notifications**: LÖVE apps pause in the background on Android; no push when the app is closed. Real push needs FCM = a central relay, against the self-hosted idea. Skipped for now; optional relay later. Same limit on iOS/browser.
-- Native libs (Monocypher, Opus, SQLite, later libmpv) must be built for Windows x64, Linux x64, Linux ARM64, Android arm64.
+- Native libs (Monocypher, Opus, SQLite, later libmpv) must be built for Windows x64, Linux x64, Linux ARM64, Android arm64. Done so far: Monocypher for Linux x64 + Windows x64, SQLite for Windows x64 (Linux uses the system `libsqlite3`).
 
 ## 8. Repo layout
 
 ```
-protocol/   spec + shared Lua (framing, msgpack, packets, crypto wrappers)
+protocol/   spec + shared Lua (framing, msgpack, packets, Noise, session, crypto binding)
 server/     standalone server
 client/     LÖVE client (desktop + Android)
 ui/         shared Lua UI: built-in components, layout engine, platform API definition
 web/        homepage (/), browser client (/app/: canvas + HTML-input backend), link handler (/link)
 layouts/    tabs/ terminal/ messenger/ deck/
 docs/       hosting, modding, protocol docs
-.github/    workflows (Pages deploy now; release builds later)
+native/     vendored C sources (Monocypher)
+scripts/    build-native.sh, build-client.sh, package-windows.sh
+tests/      test runner + suites (LuaJIT, and Lua 5.4 for the shared code)
+.github/    workflows (Pages deploy, tests; release builds later)
 ```
 
 ---
@@ -281,27 +287,30 @@ docs/       hosting, modding, protocol docs
 - [ ] Logo / icon
 
 ### Phase 1: Protocol + server + desktop client (text chat)
-- [ ] `protocol/`: framing (u32 length + MessagePack), packet definitions, versioning
-- [ ] `protocol/`: pure-Lua MessagePack encoder/decoder
-- [ ] FFI bindings: Monocypher, SQLite (Windows x64 + Linux x64 first)
-- [ ] Handshake: server challenge → Ed25519 signature → X25519 session key → encrypted frames
-- [ ] Server identity key + client key pinning (TOFU), fingerprint in invite links, warning on change
-- [ ] Protocol version negotiation + clean "update required" errors
-- [ ] Server DoS basics: connection limits, max frame size, handshake timeout, rate limits
-- [ ] Reconnect with resume (re-sync missed messages after a drop)
-- [ ] Server: config file, first-run setup (database, owner key), local port
-- [ ] Server: TCP listener, connection handling (coroutines + non-blocking sockets)
-- [ ] Server: channels + categories, send/edit/delete messages, history paging (50 per page)
-- [ ] Server: member list, presence, typing indicators
-- [ ] Client: identity key generation + local storage
-- [ ] Client: server list, add server by address, connect/reconnect
-- [ ] `ui/`: platform API spec (draw, input, text fields, clipboard, timers, safe areas)
-- [ ] `ui/`: `compat` module so shared Lua runs on both LuaJIT (5.1) and Lua 5.4; test both in CI
-- [ ] Client: LÖVE backend for the platform API
-- [ ] Client: Tabs layout hard-coded first in `ui/` (servers as tabs, channels left, chat, info/member panel)
-- [ ] Client: text rendering, scrolling, unread markers, composer
-- [ ] Client: "Host a server" button (starts bundled server)
-- [ ] Hosting guide in `docs/` (playit.gg TCP tunnel setup)
+- [x] `protocol/`: framing (u32 length + MessagePack), packet definitions, versioning
+- [x] `protocol/`: pure-Lua MessagePack encoder/decoder (hardened decoder, fuzzed)
+- [x] FFI bindings: Monocypher, SQLite (Windows x64 + Linux x64 first)
+- [x] Handshake: Noise XX (see decisions), encrypted frames after it
+- [x] Server identity key + client key pinning (TOFU), fingerprint in invite links, warning on change
+- [x] Protocol version negotiation + clean "update required" errors
+- [x] Server DoS basics: connection limits, max frame size, handshake timeout, rate limits
+- [x] Reconnect with resume (re-sync missed messages after a drop, via message revisions)
+- [x] Server: config file, first-run setup (database, server key, claim code), local port
+- [x] Server: TCP listener, connection handling (non-blocking sockets + select)
+- [x] Server: channels, send/edit/delete messages, history paging (50 per page)
+- [x] Server: member list, presence, typing indicators
+- [x] Server: owner claim code (`/claim`), owner commands (`/create`, `/topic`, `/rename`, `/delete-channel`)
+- [x] Client: identity key generation + local storage
+- [x] Client: server list, add server by address, connect/reconnect
+- [x] `ui/`: platform API spec (draw, input, text fields, clipboard, timers, safe areas)
+- [x] `ui/`: `compat` module so shared Lua runs on both LuaJIT (5.1) and Lua 5.4; test both in CI
+- [x] Client: LÖVE backend for the platform API
+- [x] Client: Tabs layout hard-coded first in `ui/` (servers as tabs, channels left, chat, info/member panel), light + dark
+- [x] Client: text rendering, scrolling, unread markers, composer
+- [x] Client: "Host a server" button (starts bundled server; restarts with the app)
+- [x] Hosting guide in `docs/` (playit.gg TCP tunnel setup)
+- [x] Tests + CI: protocol, crypto (RFC vectors), Noise (cacophony vectors), server integration, UI on LuaJIT and Lua 5.4
+- [x] Windows test build: `Zuno.exe` + `Zuno Server.exe` (`scripts/package-windows.sh`)
 
 ### Phase 2: Accounts across devices + core features
 - [ ] Export / import `.zunokey` file with recovery key (Argon2id + XChaCha20-Poly1305)
@@ -325,6 +334,7 @@ docs/       hosting, modding, protocol docs
 - [ ] Direct file sharing in the browser: WebRTC data channel (Phase 6)
 
 ### Phase 3: Server management
+- [ ] Channel categories
 - [ ] Roles + permission bitflags, per-channel overrides
 - [ ] Kick / ban by identity key
 - [ ] Invite addresses, optional server password
@@ -402,7 +412,7 @@ docs/       hosting, modding, protocol docs
 - [ ] GitHub Releases + download links on the homepage
 - [ ] Protocol reference in `docs/`
 - [ ] Update checker in clients (GitHub Releases), update notice in server console
-- [ ] Automated tests in CI: protocol, crypto, sandbox escape tests, MessagePack fuzzing
+- [ ] Automated tests in CI: sandbox escape tests, more fuzzing (protocol, crypto and MessagePack fuzzing already run in CI)
 - [ ] Security review of crypto + addon sandbox before first public release
 
 ### Phase 9: Watch together (Jellyfin), after voice (7), addons (4) and the video core

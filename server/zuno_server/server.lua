@@ -72,10 +72,8 @@ function Server.new(opts)
     self.store:create_channel("general", "text", "Say hi")
     self.store:create_channel("Lounge", "voice", "")
   end
-  if opts.owner_key and not self.store:owner() then
-    self.store:upsert_member(opts.owner_key, "owner", now_ms())
-    self.store:set_member_role(opts.owner_key, "owner")
-  end
+  -- The person hosting from their client becomes owner the first time they connect.
+  if opts.owner_key and not self.store:owner() then self.pending_owner = opts.owner_key end
   if not self.store:owner() and not self.store:meta("claim_code") then
     self.store:set_meta("claim_code", new_claim_code())
   end
@@ -102,6 +100,7 @@ function Server:start()
   self.port = tonumber(port)
   self:log("info", ("Zuno server %s \"%s\" listening on port %d"):format(version.APP, c.name, self.port))
   self:log("info", "server key fingerprint: " .. self:fingerprint())
+  self:log("info", "verified invite: <your address>#" .. self.key:sub(1, 20))
   local code = self:claim_code()
   if code then
     self:log("info", "no owner yet. To become the owner, connect with Zuno and send:  /claim " .. code)
@@ -200,12 +199,24 @@ function Server:_on_ready(conn, ev)
   local name = ev.peer_name
   if not (name and P.check_field("name", name)) then name = "user-" .. key:sub(1, 6) end
   local member, is_new = self.store:upsert_member(key, name, now_ms())
+  local changed = false
+  if self.pending_owner == key and not self.store:owner() then
+    self.store:set_member_role(key, "owner")
+    self.store:set_meta("claim_code", nil)
+    self.pending_owner = nil
+    changed = true
+  end
+  if not is_new and ev.peer_name and P.check_field("name", ev.peer_name) and ev.peer_name ~= member.name then
+    self.store:set_member_name(key, ev.peer_name) -- renamed while offline
+    changed = true
+  end
+  if changed then member = self.store:member(key) end
   conn.user = key
   local first = self.online[key] == nil
   self.online[key] = self.online[key] or {}
   self.online[key][conn] = true
   self:log("info", ("%s connected as %s%s"):format(key:sub(1, 8), member.name, is_new and " (new member)" or ""))
-  if is_new then self:broadcast({ t = "member", user = key, name = member.name, role = member.role, online = true }, conn)
+  if is_new or changed then self:broadcast({ t = "member", user = key, name = member.name, role = member.role, online = true }, conn)
   elseif first then self:broadcast({ t = "presence", user = key, online = true }, conn) end
 end
 

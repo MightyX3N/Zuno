@@ -1,0 +1,21 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LuaJIT, Lua 5.4, LuaSocket, SQLite
+        run: sudo apt-get update && sudo apt-get install -y luajit lua5.4 lua-socket libsqlite3-0
+      - name: Build the crypto library
+        run: scripts/build-native.sh linux
+      - name: All tests on LuaJIT (server, client core, crypto, Noise vectors)
+        run: luajit tests/run.lua
+      - name: Shared code on Lua 5.4 (what the browser client will run)
+        run: lua5.4 tests/run.lua --shared

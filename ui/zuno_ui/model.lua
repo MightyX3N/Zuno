@@ -29,6 +29,7 @@ function M.parse_address(text)
   if not host or host == "" then return nil, "That doesn't look like a server address. Example: my-server.at.ply.gg:41234" end
   port = tonumber(port)
   if not port or port < 1 or port > 65535 then return nil, "The port must be a number from 1 to 65535" end
+  if fp and #fp < 16 then return nil, "The part after # must be the server's key fingerprint (at least 16 characters)" end
   return { host = host:lower(), port = port, fingerprint = fp and fp:lower() or nil,
            address = (host:find(":") and ("[" .. host .. "]") or host:lower()) .. ":" .. port }
 end
@@ -90,9 +91,16 @@ function Conn:disconnect(manual)
   self:_emit("status")
 end
 
+function Conn:_went_offline()
+  self.latency = nil
+  self.typing = {}
+  for _, m in pairs(self.members) do m.online = false end -- unknown until we're back
+end
+
 function Conn:_schedule_retry(reason)
   if self.transport then self.transport:close() end
   self.transport, self.session = nil, nil
+  self:_went_offline()
   self.attempt = self.attempt + 1
   local delay = math.min(30, 2 ^ math.min(self.attempt, 5)) -- 2, 4, 8, 16, 30 s
   self.next_try = self.env.now() + delay
@@ -202,10 +210,11 @@ function Conn:_on_event(ev)
     self:_on_packet(ev.packet)
   elseif ev.type == "error" then
     self.session = nil
+    self:_went_offline()
     if ev.code == "server_key_changed" then
       self.status = "key_changed"
       self.changed_key = ev.new_key
-      self.error = "This server's identity changed. It could be a different server pretending to be it."
+      self.error = "It could be a different server pretending to be this one."
       self.transport:close()
       self:_emit("status")
     elseif ev.code == "client_outdated" or ev.code == "server_outdated" then

@@ -251,7 +251,7 @@ S["changed server key is caught; the user can accept it"] = function()
   run_until(srv, { c }, function() return c.status == "online" and c.me end, 5, "online after accepting")
   T.eq(c.entry.key, srv.key)
 
-  local d = new_client(srv.port, "dave", { address = "127.0.0.1:" .. srv.port .. "#deadbeef" })
+  local d = new_client(srv.port, "dave", { address = "127.0.0.1:" .. srv.port .. "#deadbeefdeadbeef" })
   run_until(srv, { d }, function() return d.status == "key_changed" end, 5, "invite fingerprint mismatch")
   local e = new_client(srv.port, "erin", { address = "127.0.0.1:" .. srv.port .. "#" .. srv.key:sub(1, 16) })
   run_until(srv, { e }, function() return e.status == "online" end, 5, "invite fingerprint match")
@@ -262,7 +262,8 @@ S["address parsing"] = function()
   local a = model.parse_address(" My-Server.at.ply.gg:41234 ")
   T.eq(a.host, "my-server.at.ply.gg"); T.eq(a.port, 41234)
   T.eq(model.parse_address("example.com").port, 41234)
-  T.eq(model.parse_address("zuno://1.2.3.4:5#ABCdef").fingerprint, "abcdef")
+  T.eq(model.parse_address("zuno://1.2.3.4:5#ABCdef0123456789").fingerprint, "abcdef0123456789")
+  T.eq(model.parse_address("1.2.3.4:5#abcd"), nil, "fingerprint too short")
   T.eq(model.parse_address("[::1]:9000").host, "::1")
   T.eq(model.parse_address("bad host:1"), nil)
   T.eq(model.parse_address("host:99999"), nil)
@@ -347,6 +348,26 @@ S["old clients get a clear version error"] = function()
     if err == "closed" then break end
   end
   T.eq(got, "client_outdated")
+  srv:stop()
+end
+
+S["hosting owner becomes owner on first connect; names update on reconnect"] = function()
+  local seed = C.ed25519_new_seed()
+  local key = compat.hex(C.ed25519_public(seed))
+  local dir = tmpdir()
+  local srv = start_server(dir, { owner_key = key })
+  T.ok(srv:claim_code(), "claim code exists until the host connects")
+  local env = { crypto = C, transport = TCP.factory(), now = socket.gettime, identity_seed = seed }
+  local name = "patrick"
+  env.name = function() return name end
+  local a = model.new_conn(env, { address = "127.0.0.1:" .. srv.port })
+  run_until(srv, { a }, function() return a.me end)
+  T.eq(a.me.role, "owner"); T.eq(a.me.name, "patrick"); T.eq(srv:claim_code(), nil)
+  a:disconnect(true)
+  settle(srv, { a }, 0.2)
+  name = "Patrick R"
+  a.manual_off = nil; a:retry_now()
+  run_until(srv, { a }, function() return a.me and a.me.name == "Patrick R" end, 5, "renamed on reconnect")
   srv:stop()
 end
 

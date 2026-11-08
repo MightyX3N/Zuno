@@ -15,11 +15,26 @@ Website: https://zuno.dovecross.site
 | `ui/` | Shared Lua UI (components, layout engine, platform API), run by both the LÖVE and browser clients |
 | `web/` | Website and browser client, deployed to GitHub Pages (`/` homepage, `/app/` client) |
 | `layouts/` | Built-in layout packs: `tabs` (default), `terminal`, `messenger`, `deck` |
+| `native/` | Vendored C (Monocypher) built into the crypto library |
+| `scripts/` | Build and packaging scripts |
+| `tests/` | Test suites |
 | `docs/` | Hosting, modding and protocol documentation |
 
 ## Status
 
-Early development. Nothing is released yet.
+**Phase 1 works: encrypted text chat.** Servers, channels, history, editing, typing, presence,
+unread markers, hosting from the app, light and dark mode. Voice, files, layouts and mobile come next.
+See [PLAN.md](PLAN.md) for everything planned and done.
+
+## Try it
+
+| | |
+|---|---|
+| Host a server | [docs/hosting.md](docs/hosting.md) |
+| Run the client from source | `scripts/build-client.sh && love build/client` (needs LÖVE 11.5) |
+| Run a server from source | `scripts/build-native.sh && luajit server/run.lua` (needs `luajit lua-socket libsqlite3-0`) |
+| Windows test build | `scripts/package-windows.sh` → `build/dist/Zuno-…-win64.zip` |
+| Tests | `luajit tests/run.lua` and `lua5.4 tests/run.lua --shared` |
 
 ---
 A DoveCross project.

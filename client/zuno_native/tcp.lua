@@ -45,18 +45,14 @@ function TCP:status()
       self.ip = ip
     end
     if not self.sock then self:_start_connect(); if self.state ~= "connecting" then return self.state, self.err end end
-    local _, w = socket.select(nil, { self.sock }, 0)
-    if w and #w > 0 then
-      -- writable: either connected or failed
-      local peer = self.sock:getpeername()
-      if peer then
-        self.state = "open"
-        self.sock:setoption("tcp-nodelay", true)
-      else
-        local _, err = self.sock:connect(self.ip, self.port)
-        if err == "already connected" then self.state = "open"
-        else self:_fail(err == "timeout" and "connection refused" or (err or "connection refused")) end
-      end
+    -- Ask connect() again: it reports "already connected", still in progress, or the real
+    -- error. (On Windows a refused connect never shows up as writable in select().)
+    local ok, err = self.sock:connect(self.ip, self.port)
+    if ok or err == "already connected" then
+      self.state = "open"
+      self.sock:setoption("tcp-nodelay", true)
+    elseif err ~= "timeout" and err ~= "Operation already in progress" and err ~= "Operation now in progress" then
+      self:_fail(err or "connection refused")
     end
   end
   if self.state == "open" then self:_flush() end
@@ -87,7 +83,10 @@ function TCP:receive()
     if data and #data > 0 then return data end
     return nil
   end
-  if data and #data > 0 then return data end
+  if data and #data > 0 then
+    if TCP.on_activity then TCP.on_activity() end
+    return data
+  end
   return nil
 end
 
