@@ -122,6 +122,8 @@ h1, h2, h3 { font-family: var(--font-head); line-height: 1.15; margin: 0; }
 .section > .wrap > p.after { margin: 24px 0 0; font-size: 15px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
 .grid-3 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.host-options { margin-bottom: 40px; }
+h3.sub { font-size: 22px; margin: 0 0 16px; }
 @media (max-width: 380px) { .grid-3 { grid-template-columns: 1fr; } }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; }
 .card h3 { font-size: 19px; margin-bottom: 8px; }

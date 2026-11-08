@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Zuno: self-hosted chat</title>
-  <meta name="description" content="Zuno is a self-hosted chat app with text, voice, moddable layouts and watch-together. Host a server on your own PC with playit.gg, or on a VPS or NAS.">
+  <meta name="description" content="Zuno is a self-hosted chat app with text, voice, moddable layouts and watch-together. Host a server on your own PC with playit.gg, or on a VPS, dedicated server or NAS.">
   <meta name="theme-color" content="#fbfaf7" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#17191e" media="(prefers-color-scheme: dark)">
   <meta property="og:title" content="Zuno: self-hosted chat">
@@ -39,7 +39,7 @@
     <section class="hero">
       <div class="wrap">
         <h1>Chat on servers your friends actually own.</h1>
-        <p>Zuno is a chat app with text channels, voice and layouts each server can make its own. Host it on your own PC, a VPS or a NAS. No company in the middle.</p>
+        <p>Zuno is a chat app with text channels, voice and layouts each server can make its own. Host it on your own PC, a VPS, a dedicated server or a NAS. No company in the middle.</p>
         <div class="hero-actions">
           <a class="btn btn-primary" href="app/">Open in your browser</a>
           <a class="btn btn-ghost" href="#download">Download</a>
@@ -113,7 +113,30 @@
     <section class="section" id="host">
       <div class="wrap">
         <h2>Host a server</h2>
-        <p>The server is a small standalone program. Run it on your PC, a VPS, a dedicated server or a NAS.</p>
+        <p>The server is a small standalone program for Windows and Linux (x64 and ARM64). Run it wherever suits you.</p>
+        <div class="grid host-options">
+          <div class="card">
+            <span class="tag">Free</span>
+            <h3>Your own PC</h3>
+            <p>Run it from the desktop client or as its own program. Share it with a free playit.gg tunnel, no port forwarding needed. Online while your PC is on.</p>
+          </div>
+          <div class="card">
+            <span class="tag">Always on</span>
+            <h3>VPS</h3>
+            <p>Rent a small Linux or Windows server and open the port. Online around the clock, with plenty of upload for voice and watch parties.</p>
+          </div>
+          <div class="card">
+            <span class="tag">Big communities</span>
+            <h3>Dedicated server</h3>
+            <p>A whole machine for large servers with lots of voice, file sharing and video. Same program as everywhere else.</p>
+          </div>
+          <div class="card">
+            <span class="tag">At home, always on</span>
+            <h3>NAS or Raspberry Pi</h3>
+            <p>Runs on Linux x64 and ARM64, so most NAS boxes and a Raspberry Pi 4 or 5 work. Sits next to your Jellyfin library too.</p>
+          </div>
+        </div>
+        <h3 class="sub">Get it running</h3>
         <ol class="steps">
           <li>
             <div>
@@ -124,7 +147,7 @@
           <li>
             <div>
               <h3>Open it to the internet</h3>
-              <p>At home, create a TCP tunnel in <a href="https://playit.gg">playit.gg</a> pointing at the server's port (plus a UDP tunnel for voice). The free plan is enough. On a VPS, just open the port.</p>
+              <p>At home, create a TCP tunnel in <a href="https://playit.gg">playit.gg</a> pointing at the server's port (plus a UDP tunnel for voice). The free plan is enough. On a VPS or dedicated server, open the port in its firewall instead.</p>
             </div>
           </li>
           <li>
