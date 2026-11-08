@@ -67,6 +67,15 @@ Zuno works on the free plan, but if the host has Premium, Zuno uses what it adds
   - **No domain**: server can serve the web client itself over plain `http://name.at.ply.gg:port` → `ws://` works. Text chat yes; **no voice** (mic needs a secure context). App-level encryption still applies.
 - Browser voice = Opus over WebSocket (TCP), slightly higher latency.
 
+### 4.1 Server-hosted web client
+- Every server can serve the web client itself on its own port (HTTP on the same port as TCP/WebSocket). Opening the server's address in a browser loads Zuno with that server's layout preloaded.
+- Full features (incl. voice) when reached over HTTPS (playit Premium HTTPS tunnel or own cert); text only over plain HTTP.
+- **Trust rule**: the host controls that copy of the client, so it could be modified to steal keys.
+  - Server-hosted client starts with a **separate identity for that server** by default.
+  - Linking/importing the main account there shows a warning naming the host ("only link if you trust this host").
+  - The official client at `zuno.dovecross.site/app/` is the recommended place for the main account.
+- Server bundles a web client version matching its protocol version; owners can turn the built-in client off.
+
 ## 5. Identity, accounts and devices
 
 - Identity = **Ed25519 master key** generated on first launch. No usernames/passwords, no central accounts.
@@ -193,7 +202,8 @@ docs/       hosting, modding, protocol docs
 ### Phase 6: Browser client
 - [ ] Server: WebSocket support on the same port (first-byte sniffing)
 - [ ] Server: optional TLS (own cert) + Let's Encrypt DNS-01 helper/docs
-- [ ] Server: optional built-in web client over plain HTTP for owners without a domain
+- [ ] Server: built-in web client served on its own port (HTTP + HTTPS), with the server's layout preloaded, can be turned off
+- [ ] Server-hosted client: separate per-server identity by default + warning before linking the main account
 - [ ] Server: work behind a playit Premium HTTPS tunnel (plain WebSocket behind TLS termination)
 - [ ] Server config "connection setup": list public addresses by type (tcp / udp / https / custom domain)
 - [ ] Clients pick the right address from the server's address list (native → TCP/UDP, browser → HTTPS)
