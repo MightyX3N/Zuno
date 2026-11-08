@@ -76,6 +76,12 @@ Zuno works on the free plan, but if the host has Premium, Zuno uses what it adds
   - The official client at `zuno.dovecross.site/app/` is the recommended place for the main account.
 - Server bundles a web client version matching its protocol version; owners can turn the built-in client off.
 
+### 4.2 Load on the official website
+- Chat and voice never pass through GitHub: browsers connect straight to Zuno servers. Pages only serves the client's static files (cached after first load).
+- GitHub Pages soft limit ≈ 100 GB bandwidth/month → keep the web client small. Server-hosted clients take load off Pages.
+- App binaries go on **GitHub Releases**, not Pages.
+- If traffic outgrows Pages, `web/` is plain static files → move to Cloudflare Pages or similar with no code changes.
+
 ## 5. Identity, accounts and devices
 
 - Identity = **Ed25519 master key** generated on first launch. No usernames/passwords, no central accounts.
