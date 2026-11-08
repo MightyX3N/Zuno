@@ -232,11 +232,26 @@ Servers can add real features: polls, games, music-bot panels, leaderboards, str
 - Core Zuno provides capture (screen/camera), encode/decode (H.264 or VP9/AV1 via FFI; WebCodecs in browser), stream transport, and a video component.
 - Addons/plugins decide UI and rules ("Go live" button, who may stream, quality/viewer caps, watch parties).
 - Bandwidth: server relays every stream to every viewer → P2P for small groups, owner quality caps, VPS for big servers.
+- The **video playback core** (decoding + drawing video into the UI) is shared with Watch together (6.4): native uses **libmpv via FFI**, rendered into a texture; browser uses `<video>` + hls.js / WebCodecs.
+
+### 6.4 Watch together (Jellyfin)
+Server owners can connect their own **Jellyfin** server so members watch movies and shows together, with chat and voice running alongside. Same self-hosted idea as Zuno: the media stays on the owner's PC / NAS.
+
+- **Official addon**: a server plugin + client panel, built on the video playback core (6.3). Ships with Zuno but is off until the owner sets it up.
+- **Owner setup** (server settings): Jellyfin address + API key of a **dedicated Jellyfin user**. That user's library access decides what members can see. Who may start a watch party is a normal Zuno permission.
+- **Members**: "Watch together" panel → browse the shared library (posters, search, seasons/episodes) → start a watch party in a channel, others click Join.
+- **Stream route (default): through the Zuno server.** The plugin fetches the stream from Jellyfin and forwards it to each viewer over the normal encrypted Zuno connection. Works with the single playit TCP tunnel, Jellyfin never has to be public, viewers need no Jellyfin account.
+  - Cost: the host's **upload** bandwidth (5 viewers × 8 Mbit/s = 40 Mbit/s). Owner sets a max quality / bitrate and max viewers; Jellyfin transcodes down to it. Optional later: viewers pick a lower quality for themselves.
+  - Optional **direct mode** for owners whose Jellyfin is already public over HTTPS: clients stream straight from Jellyfin with a short-lived token from the plugin; Zuno only syncs.
+- **Sync done by Zuno, not Jellyfin SyncPlay** (SyncPlay only works between Jellyfin clients): the party leader's play / pause / seek go to everyone with a timestamp; clients correct small drift by adjusting speed slightly and hard-seek on big drift. Everyone waits while someone buffers. Leader can hand over control or allow everyone to control.
+- Subtitles and audio tracks: picked per viewer from what Jellyfin offers.
+- Fits the **TV** variant especially well (couch + remote + friends in voice).
 
 ## 7. Known platform limits
 
+- **LÖVE video**: LÖVE only plays Ogg Theora. Real video (Jellyfin, streams) needs libmpv via FFI on every native target, Android included.
 - **Notifications**: LÖVE apps pause in the background on Android; no push when the app is closed. Real push needs FCM = a central relay, against the self-hosted idea. Skipped for now; optional relay later. Same limit on iOS/browser.
-- Native libs (Monocypher, Opus, SQLite) must be built for Windows x64, Linux x64, Linux ARM64, Android arm64.
+- Native libs (Monocypher, Opus, SQLite, later libmpv) must be built for Windows x64, Linux x64, Linux ARM64, Android arm64.
 
 ## 8. Repo layout
 
@@ -389,6 +404,18 @@ docs/       hosting, modding, protocol docs
 - [ ] Update checker in clients (GitHub Releases), update notice in server console
 - [ ] Automated tests in CI: protocol, crypto, sandbox escape tests, MessagePack fuzzing
 - [ ] Security review of crypto + addon sandbox before first public release
+
+### Phase 9: Watch together (Jellyfin), after voice (7), addons (4) and the video core
+- [ ] Video playback core: libmpv FFI bindings + render to texture (Windows, Linux, Android)
+- [ ] Video playback core in the browser: `<video>` + hls.js
+- [ ] Server plugin: Jellyfin connection (address, API key, dedicated user), library browsing API
+- [ ] Server plugin: stream proxy (Jellyfin → Zuno server → viewers), owner max bitrate / max viewers
+- [ ] Client panel: browse library, start / join a watch party in a channel
+- [ ] Sync: leader controls, timestamped play / pause / seek, drift correction, wait-for-buffering, hand over control
+- [ ] Per-viewer subtitles and audio track
+- [ ] Optional direct mode (public Jellyfin over HTTPS, short-lived tokens)
+- [ ] TV variant of the watch-together screen
+- [ ] Hosting guide: setting up Jellyfin with Zuno
 
 ### Later / ideas
 - [ ] DMs (relayed through a server both users share, end-to-end encrypted)
