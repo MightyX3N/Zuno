@@ -21,7 +21,9 @@ Repo: https://github.com/MightyX3N/Zuno · Studio: DoveCross · Author: MightyX3
 |---|---|
 | Name | Zuno |
 | Native client | LÖVE 11.5 (LuaJIT): Windows, Linux, Android |
-| Browser client | Plain HTML/CSS/JS UI + **Wasmoon** (Lua 5.4 in WASM) to run shared Lua and layout scripts. Not love.js (no JS FFI, ~10–15 MB, bad iOS keyboard) |
+| UI architecture | **One Lua UI for every platform** (see 6.0). Built-in components, layouts and addon widgets are written once in Lua against a small **platform API**. Only the backend that implements that API exists twice: LÖVE and browser |
+| Browser client | **Wasmoon** (Lua 5.4 in WASM) runs the same Lua UI as the native client. JS only implements the platform API: drawing on a `<canvas>`, with **real HTML `<input>`/`<textarea>` elements placed over the canvas** for typing (proper iOS/Android keyboard, IME, emoji, paste). Not love.js (no JS FFI, ~10–15 MB, bad iOS keyboard) |
+| Lua dialect | Shared code (protocol, UI, layouts, addons) must run on **both LuaJIT (5.1) and Lua 5.4**: no `goto`, no 5.4-only `//` or bitwise operators, use a small `compat` module for bit ops and integer math |
 | iOS | Through the browser client (Safari, add to home screen). No native iOS app |
 | Server | Standalone **LuaJIT + LuaSocket**, no LÖVE. Targets Windows x64, Linux x64, Linux ARM64 (NAS / Raspberry Pi) |
 | Client hosting | Desktop client bundles the `server/` package and has a "Host a server" button |
@@ -157,15 +159,31 @@ Keys are free to make, so anyone can create endless identities. Servers need gat
 
 ## 6. Layouts and modding
 
+### 6.0 One UI, two thin backends
+- The whole client UI is **Lua, written once**: built-in components, layout packs, layout scripts and addon widgets. Native runs it on LuaJIT inside LÖVE; the browser runs the same files on Wasmoon.
+- The UI talks to the platform only through a small **platform API**:
+  - draw: rect, rounded rect, line, image, text (with font, size, color, clipping), measure text
+  - input: pointer/touch, wheel/scroll, keys, focus
+  - text fields: create / move / resize / read / destroy a native text field
+  - clipboard write (read only after a user paste), open link (with confirm), sound playback
+  - timers, window size, safe areas (phone notch / keyboard height)
+- **Two backends** implement that API and nothing else:
+  - **LÖVE**: `love.graphics`, `love.keyboard`/`love.textinput`, `love.system` clipboard.
+  - **Browser**: a full-window `<canvas>` for drawing. Text fields are **real HTML `<input>`/`<textarea>` elements positioned over the canvas** where the Lua UI places them, styled to match the layout. That gives the proper on-screen keyboard on iOS/Android, IME, emoji picker, paste and spellcheck.
+- **Text selection / copy in messages**: done in the Lua UI (drag to select, copy via the platform API) so it works the same everywhere.
+- **Accessibility in the browser**: the backend keeps a hidden DOM mirror (ARIA labels for buttons, a live region for new messages) generated from the Lua UI tree, so screen readers still work.
+- Shared Lua lives in `ui/` (plus `protocol/` and `layouts/`); the Pages workflow copies these into the site at deploy so the browser loads the exact same files.
+
+### 6.1 Layout packs
 - A **layout pack** = mostly data (Lua table): regions, which built-in components go where, theme tokens (colors, fonts, spacing), assets, and a **mobile variant**.
 - Built-in components: server list, channel list, message list, composer, member list, voice panel, top bar, settings.
-- Optional **sandboxed scripts**: no `io`, `os`, `ffi`, `require`, network; instruction limit + memory cap. Custom widgets draw through a small API (rect, text, image, input) implemented by both renderers (LÖVE and HTML).
+- Optional **sandboxed scripts**: no `io`, `os`, `ffi`, `require`, network; instruction limit + memory cap. Custom widgets draw through the same platform API as the built-in components (see 6.0), so a layout works unchanged on LÖVE and in the browser.
 - Servers can ship a pack; clients download on connect and cache by hash.
 - User controls: "Use server layouts" toggle + per-server override. Missing mobile variant → default mobile layout.
 - Built-in packs (from the design canvas): **tabs** (default), **terminal**, **messenger** (early-2000s IM look, no MSN branding), **deck** (multi-column).
 - Design previews: https://claude.ai/artifact/M3y1Py8gQWnN5JgjRQknHi (private to the owner)
 
-### 6.1 Addons (features, not just theming)
+### 6.2 Addons (features, not just theming)
 
 Servers can add real features: polls, games, music-bot panels, leaderboards, stream panels, custom commands, and so on. Two kinds:
 
@@ -190,7 +208,7 @@ Servers can add real features: polls, games, music-bot panels, leaderboards, str
 - **Permissions shown on join**: list of what the server's addons can do; user can allow, deny, or turn addons off per server at any time. Rate limits on everything that sends.
 - Addon code is signed by the server key, cached by hash, and viewable ("View source") from server settings.
 
-### 6.2 Video sharing (future)
+### 6.3 Video sharing (future)
 - Core Zuno provides capture (screen/camera), encode/decode (H.264 or VP9/AV1 via FFI; WebCodecs in browser), stream transport, and a video component.
 - Addons/plugins decide UI and rules ("Go live" button, who may stream, quality/viewer caps, watch parties).
 - Bandwidth: server relays every stream to every viewer → P2P for small groups, owner quality caps, VPS for big servers.
@@ -206,7 +224,8 @@ Servers can add real features: polls, games, music-bot panels, leaderboards, str
 protocol/   spec + shared Lua (framing, msgpack, packets, crypto wrappers)
 server/     standalone server
 client/     LÖVE client (desktop + Android)
-web/        homepage (/), browser client (/app/), link handler (/link)
+ui/         shared Lua UI: built-in components, layout engine, platform API definition
+web/        homepage (/), browser client (/app/: canvas + HTML-input backend), link handler (/link)
 layouts/    tabs/ terminal/ messenger/ deck/
 docs/       hosting, modding, protocol docs
 .github/    workflows (Pages deploy now; release builds later)
@@ -241,7 +260,10 @@ docs/       hosting, modding, protocol docs
 - [ ] Server: member list, presence, typing indicators
 - [ ] Client: identity key generation + local storage
 - [ ] Client: server list, add server by address, connect/reconnect
-- [ ] Client: Tabs layout hard-coded first (servers as tabs, channels left, chat, info/member panel)
+- [ ] `ui/`: platform API spec (draw, input, text fields, clipboard, timers, safe areas)
+- [ ] `ui/`: `compat` module so shared Lua runs on both LuaJIT (5.1) and Lua 5.4; test both in CI
+- [ ] Client: LÖVE backend for the platform API
+- [ ] Client: Tabs layout hard-coded first in `ui/` (servers as tabs, channels left, chat, info/member panel)
 - [ ] Client: text rendering, scrolling, unread markers, composer
 - [ ] Client: "Host a server" button (starts bundled server)
 - [ ] Hosting guide in `docs/` (playit.gg TCP tunnel setup)
@@ -313,8 +335,11 @@ docs/       hosting, modding, protocol docs
 - [ ] Server config "connection setup": list public addresses by type (tcp / udp / https / custom domain)
 - [ ] Clients pick the right address from the server's address list (native → TCP/UDP, browser → HTTPS)
 - [ ] Hosting guide: free plan vs Premium setups
-- [ ] `web/app/`: HTML/CSS renderer for layout packs
-- [ ] Wasmoon integration: run shared Lua + layout scripts in the browser
+- [ ] Wasmoon integration: run the full shared Lua UI (`ui/`, `protocol/`, `layouts/`) in the browser
+- [ ] `web/app/`: browser backend for the platform API (canvas drawing, text measuring, input events)
+- [ ] `web/app/`: native HTML text fields positioned over the canvas (iOS/Android keyboard, IME, emoji, paste)
+- [ ] `web/app/`: hidden DOM mirror for screen readers (ARIA labels, live region for new messages)
+- [ ] Pages workflow: copy `ui/`, `protocol/`, `layouts/` into the site at deploy
 - [ ] JS/WASM crypto matching the native implementation
 - [ ] QR scanning in the browser (camera) for device linking
 - [ ] iOS Safari testing, add-to-home-screen support
@@ -342,8 +367,8 @@ docs/       hosting, modding, protocol docs
 - [ ] Threads (reply chains in their own side panel)
 - [ ] Custom emoji / sticker packs per server
 - [ ] Translations (English + Danish first)
-- [ ] Accessibility: font scaling, high contrast, screen-reader labels in the web client
+- [ ] Accessibility: font scaling, high contrast, screen-reader labels in the web client (via the hidden DOM mirror)
 - [ ] Optional public server list (static JSON on the website, added via pull request)
 - [ ] Plugin / bot API in Lua
 - [ ] Optional push relay for background notifications
-- [ ] Video / screen sharing as a core feature addons can hook into (see 6.2)
+- [ ] Video / screen sharing as a core feature addons can hook into (see 6.3)

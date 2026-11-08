@@ -12,6 +12,7 @@ Website: https://zuno.dovecross.site
 | `protocol/` | Wire protocol spec and shared Lua code (framing, packets) used by server and clients |
 | `server/` | Standalone server (LuaJIT + LuaSocket). Runs on Windows, Linux x64 and Linux ARM64 |
 | `client/` | Native client built on LÖVE: Windows, Linux and Android. Can also host a server |
+| `ui/` | Shared Lua UI (components, layout engine, platform API), run by both the LÖVE and browser clients |
 | `web/` | Website and browser client, deployed to GitHub Pages (`/` homepage, `/app/` client) |
 | `layouts/` | Built-in layout packs: `tabs` (default), `terminal`, `messenger`, `deck` |
 | `docs/` | Hosting, modding and protocol documentation |
