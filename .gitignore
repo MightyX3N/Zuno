@@ -1,0 +1,16 @@
+# Build output
+/build/
+/dist/
+*.love
+*.apk
+
+# Server runtime data
+server/data/
+*.db
+*.db-journal
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

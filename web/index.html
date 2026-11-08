@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zuno: self-hosted chat</title>
+  <meta name="description" content="Zuno is a self-hosted chat app with text, voice and moddable layouts. Host a server on your own PC with playit.gg, or on a VPS or NAS.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./"><span class="brand-mark" aria-hidden="true">Z</span>Zuno</a>
+      <nav class="nav" aria-label="Main">
+        <a href="#features">Features</a>
+        <a href="#download">Download</a>
+        <a href="#host">Host a server</a>
+        <a href="https://github.com/MightyX3N/Zuno">GitHub</a>
+        <a class="btn btn-primary" href="app/">Open Zuno</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="wrap">
+        <h1>Chat on servers your friends actually own.</h1>
+        <p>Zuno is a chat app with text channels, voice and layouts each server can make its own. Host it on your own PC, a VPS or a NAS. No company in the middle.</p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="app/">Open in your browser</a>
+          <a class="btn btn-ghost" href="#download">Download</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="features">
+      <div class="wrap">
+        <h2>What you get</h2>
+        <p>Everything runs on servers people host themselves.</p>
+        <div class="grid">
+          <div class="card">
+            <h3>Text and voice</h3>
+            <p>Text channels with history, file sharing and replies, plus voice channels for hanging out.</p>
+          </div>
+          <div class="card">
+            <h3>Layouts per server</h3>
+            <p>Each server can ship its own layout and theme. Don't like it? Switch back to your own.</p>
+          </div>
+          <div class="card">
+            <h3>Host from home</h3>
+            <p>Run a server on your own PC and share it through playit.gg. No port forwarding needed.</p>
+          </div>
+          <div class="card">
+            <h3>Encrypted</h3>
+            <p>All traffic between you and a server is encrypted. Your identity is a key on your device, not an account on someone else's site.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="download">
+      <div class="wrap">
+        <h2>Download</h2>
+        <p>Zuno is in early development. Downloads appear here when the first release is out.</p>
+        <div class="grid">
+          <div class="card">
+            <span class="tag">Coming soon</span>
+            <h3>Windows</h3>
+            <p>Desktop client. Can also host a server.</p>
+          </div>
+          <div class="card">
+            <span class="tag">Coming soon</span>
+            <h3>Linux</h3>
+            <p>Desktop client. Can also host a server.</p>
+          </div>
+          <div class="card">
+            <span class="tag">Coming soon</span>
+            <h3>Android</h3>
+            <p>Mobile client with layouts made for phones.</p>
+          </div>
+          <div class="card">
+            <span class="tag">Browser</span>
+            <h3>Web and iPhone</h3>
+            <p>Use Zuno in any browser, including Safari on iPhone and iPad. <a href="app/">Open the web client</a>.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="host">
+      <div class="wrap">
+        <h2>Host a server</h2>
+        <p>The server is a small standalone program. Run it on your PC, a VPS, a dedicated server or a NAS.</p>
+        <ol class="steps">
+          <li>
+            <div>
+              <h3>Run the server</h3>
+              <p>Start the Zuno server, or press "Host a server" in the desktop client. It sets up its database and your owner key on first run.</p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <h3>Open it to the internet</h3>
+              <p>At home, create a TCP tunnel in <a href="https://playit.gg">playit.gg</a> pointing at the server's port (plus a UDP tunnel for voice). On a VPS, just open the port.</p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <h3>Share the address</h3>
+              <p>Send friends the address, for example <code>my-server.at.ply.gg:41234</code>. They add it in Zuno and they're in.</p>
+            </div>
+          </li>
+        </ol>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <span>Zuno, a DoveCross project.</span>
+      <a href="https://github.com/MightyX3N/Zuno">Source on GitHub</a>
+    </div>
+  </footer>
+</body>
+</html>
