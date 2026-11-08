@@ -125,6 +125,36 @@ Send files straight to another user without posting them in a channel. Both user
 - Progress bar, pause / resume (continues after a dropped connection), multiple files at once, hash check on arrival.
 - Streamer mode hides incoming file names until revealed.
 
+### 5.6 Server identity (anti-impersonation)
+- Every server has its own **Ed25519 server key**, created on first run. The handshake proves the server holds it.
+- Clients **pin** the key on first connect (trust on first use) and warn loudly if it changes ("this server's identity changed").
+- Invite links can include the key fingerprint so even the first connect is verified.
+- Moving a server to a new address/host keeps the key (it's in the server backup), so members don't get a warning.
+
+### 5.7 What is encrypted from whom
+- **All traffic** is encrypted between client and server (playit and the network can't read it).
+- **Channel messages** are readable by the server (it stores, pages and searches them). The host is the community owner, same trust model as any self-hosted chat. Stated clearly in the client.
+- **DMs and direct file transfers are end-to-end encrypted**: the relaying server can't read them.
+
+### 5.8 Spam and raid protection
+Keys are free to make, so anyone can create endless identities. Servers need gates:
+- Join modes: open / password / invite code / owner approval.
+- New-member limits: slow mode, can't post links or files for X minutes, rate limits per identity and per connection.
+- Optional small proof-of-work on join to make mass joins expensive.
+- Lockdown button: pause joins during a raid.
+- Reports to moderators, message deletion in bulk, audit log of mod actions.
+- Server-side DoS protection: connection limits, frame size limits, handshake timeouts.
+
+### 5.9 Versions and updates
+- Protocol version in the handshake; server and client agree on the highest version both support, refuse cleanly with "update your app" / "server is outdated".
+- Clients check GitHub Releases for updates and offer to install (desktop) or link to the new APK.
+- Server prints update notices in its console.
+
+### 5.10 Server admin
+- Headless server is managed from the owner's Zuno client (server settings) plus a **console** (CLI commands: create channel, ban, backup, etc.).
+- **Backup / restore**: one command exports database, server key, config, layouts and addons into one file; restore on a new machine to move hosts.
+- Users can delete their own messages, and ask the server to delete everything they posted ("leave and delete my data").
+
 ## 6. Layouts and modding
 
 - A **layout pack** = mostly data (Lua table): regions, which built-in components go where, theme tokens (colors, fonts, spacing), assets, and a **mobile variant**.
@@ -201,6 +231,10 @@ docs/       hosting, modding, protocol docs
 - [ ] `protocol/`: pure-Lua MessagePack encoder/decoder
 - [ ] FFI bindings: Monocypher, SQLite (Windows x64 + Linux x64 first)
 - [ ] Handshake: server challenge → Ed25519 signature → X25519 session key → encrypted frames
+- [ ] Server identity key + client key pinning (TOFU), fingerprint in invite links, warning on change
+- [ ] Protocol version negotiation + clean "update required" errors
+- [ ] Server DoS basics: connection limits, max frame size, handshake timeout, rate limits
+- [ ] Reconnect with resume (re-sync missed messages after a drop)
 - [ ] Server: config file, first-run setup (database, owner key), local port
 - [ ] Server: TCP listener, connection handling (coroutines + non-blocking sockets)
 - [ ] Server: channels + categories, send/edit/delete messages, history paging (50 per page)
@@ -236,6 +270,16 @@ docs/       hosting, modding, protocol docs
 - [ ] Invite addresses, optional server password
 - [ ] Server settings editable from the client (owner key)
 - [ ] Optional playit Proxy Protocol support (real client IPs)
+- [ ] Join modes: open / password / invite code / owner approval
+- [ ] New-member limits (slow mode, no links/files at first), optional proof-of-work on join
+- [ ] Raid lockdown button
+- [ ] Reports, bulk delete, audit log of mod actions
+- [ ] Server console (CLI commands for admin tasks)
+- [ ] Server backup / restore (DB, server key, config, layouts, addons) for moving hosts
+- [ ] "Delete my data" request from a user
+- [ ] Message search (server-side)
+- [ ] Pinned messages, per-channel notification settings (mute, mentions only)
+- [ ] Block users (client-side, hides them everywhere)
 
 ### Phase 4: Layouts and addons
 - [ ] Layout pack format (Lua table spec) + loader
@@ -288,9 +332,18 @@ docs/       hosting, modding, protocol docs
 - [ ] GitHub Actions: server packages (Windows x64, Linux x64, Linux ARM64)
 - [ ] GitHub Releases + download links on the homepage
 - [ ] Protocol reference in `docs/`
+- [ ] Update checker in clients (GitHub Releases), update notice in server console
+- [ ] Automated tests in CI: protocol, crypto, sandbox escape tests, MessagePack fuzzing
+- [ ] Security review of crypto + addon sandbox before first public release
 
 ### Later / ideas
-- [ ] DMs (relayed through a server both users share)
+- [ ] DMs (relayed through a server both users share, end-to-end encrypted)
+- [ ] Friends list + online status across servers
+- [ ] Threads (reply chains in their own side panel)
+- [ ] Custom emoji / sticker packs per server
+- [ ] Translations (English + Danish first)
+- [ ] Accessibility: font scaling, high contrast, screen-reader labels in the web client
+- [ ] Optional public server list (static JSON on the website, added via pull request)
 - [ ] Plugin / bot API in Lua
 - [ ] Optional push relay for background notifications
 - [ ] Video / screen sharing as a core feature addons can hook into (see 6.2)
