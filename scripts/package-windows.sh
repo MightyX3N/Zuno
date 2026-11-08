@@ -42,8 +42,12 @@ cp -r server/zuno_server build/server-love/server/
 
 # 4. Assemble
 rm -rf "$OUT"; mkdir -p "$OUT/licenses"
-cat "$LOVE_DIR/love.exe" build/zuno.love > "$OUT/Zuno.exe"
-cat "$LOVE_DIR/love.exe" build/zuno-server.love > "$OUT/Zuno Server.exe"
+# Zuno's icon and name (Windows shows the name in notifications) go into the exe first;
+# the game archive must stay at the very end of the file.
+python3 scripts/set-exe-resources.py "$LOVE_DIR/love.exe" "$CACHE/Zuno.exe" client/assets/icon/zuno.ico "Zuno" "Zuno" "$VERSION"
+python3 scripts/set-exe-resources.py "$LOVE_DIR/love.exe" "$CACHE/Zuno Server.exe" client/assets/icon/zuno.ico "Zuno Server" "Zuno" "$VERSION"
+cat "$CACHE/Zuno.exe" build/zuno.love > "$OUT/Zuno.exe"
+cat "$CACHE/Zuno Server.exe" build/zuno-server.love > "$OUT/Zuno Server.exe"
 cp "$LOVE_DIR"/*.dll "$OUT/"
 cp build/native/win64/zunocrypto.dll "$CACHE/sqlite3.dll" "$OUT/"
 cp "$LOVE_DIR/license.txt" "$OUT/licenses/LOVE.txt"
@@ -79,7 +83,7 @@ Your account
   if a device is lost. Streamer mode hides addresses and keys while OBS is running.
 
 Chatting
-  **bold**, *italic*, ~~strike~~, `code`, ```code blocks``` and > quotes work in messages.
+  **bold**, *italic*, ~~strike~~, \`code\`, \`\`\`code blocks\`\`\` and > quotes work in messages.
   Type @ to mention someone and : to find an emoji. Hover a message to react or reply.
   Settings > Notifications decides what makes a notification while Zuno is open.
 

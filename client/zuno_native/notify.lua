@@ -80,8 +80,12 @@ local function windows_show(title, body)
     if M.icon_path then
       local wp = ffi.new("uint16_t[1024]")
       utf16_into(wp, 1024, M.icon_path)
-      local ok, icon = pcall(function() return ffi.load("user32").LoadImageW(nil, wp, 1, 0, 0, 0x10 + 0x40) end) -- IMAGE_ICON, LR_LOADFROMFILE | LR_DEFAULTSIZE
+      local user32 = ffi.load("user32")
+      -- IMAGE_ICON from a file: small for the tray, big for the notification itself
+      local ok, icon = pcall(function() return user32.LoadImageW(nil, wp, 1, 0, 0, 0x10 + 0x40) end)
       if ok and icon ~= nil then d.hIcon = icon end
+      local ok2, big = pcall(function() return user32.LoadImageW(nil, wp, 1, 64, 64, 0x10) end)
+      if ok2 and big ~= nil then d.hBalloonIcon = big end
     end
     if d.hIcon == nil then
       local path = ffi.new("uint16_t[512]")
@@ -97,7 +101,9 @@ local function windows_show(title, body)
   d.uFlags = 0x10 -- NIF_INFO
   utf16_into(d.szInfoTitle, 64, title)
   utf16_into(d.szInfo, 256, body ~= "" and body or " ")
-  d.dwInfoFlags = 0x1 + 0x10 -- NIIF_INFO | NIIF_NOSOUND (Zuno plays its own sound)
+  -- NIIF_USER | NIIF_LARGE_ICON shows Zuno's icon instead of the blue "i"; NIIF_NOSOUND because
+  -- Zuno plays its own sound. The app name above it is the exe's FileDescription ("Zuno").
+  d.dwInfoFlags = d.hBalloonIcon ~= nil and (0x4 + 0x20 + 0x10) or (0x1 + 0x10)
   return tray.shell.Shell_NotifyIconW(1, d) ~= 0 -- NIM_MODIFY
 end
 
